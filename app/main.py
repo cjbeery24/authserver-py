@@ -36,7 +36,7 @@ if settings.cors_enabled:
         allow_credentials=settings.cors_credentials,
         allow_methods=get_cors_methods(),
         allow_headers=get_cors_headers(),
-    )
+    ) 
 
 # Add trusted host middleware for security
 app.add_middleware(

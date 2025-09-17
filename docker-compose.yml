@@ -3,25 +3,30 @@ services:
     image: postgres:17-alpine
     container_name: authserver_postgres
     environment:
-      POSTGRES_DB: authserver
-      POSTGRES_USER: authuser
-      POSTGRES_PASSWORD: authpass
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U authuser -d authserver"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    command: >
+      postgres
+      -c log_statement=all
+      -c log_connections=on
+      -c log_disconnections=on
 
   redis:
     image: redis:7-alpine
     container_name: authserver_redis
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

@@ -1,3 +1,8 @@
+-- This script sets up extensions and functions for the application database
+-- PostgreSQL automatically creates the database and user based on:
+-- POSTGRES_DB (from DATABASE_NAME), POSTGRES_USER (from DATABASE_USER), 
+-- and POSTGRES_PASSWORD (from DATABASE_PASSWORD) environment variables
+
 -- Enable UUID extension for generating unique identifiers
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 

@@ -50,8 +50,10 @@
 - `app/middleware/security.py` - Security headers and CORS middleware
 - `app/middleware/security.py` - Unit tests for security middleware
 - `alembic/` - Database migration management
-- `alembic/env.py` - Alembic environment configuration
+- `alembic/env.py` - Alembic environment configuration with database connection and model imports
 - `alembic/versions/` - Database migration files
+- `alembic.ini` - Alembic configuration file
+- `alembic/script.py.mako` - Migration script template
 - `tests/` - Integration and end-to-end tests
 - `tests/conftest.py` - Test configuration and fixtures
 - `tests/test_integration.py` - Integration tests for complete workflows
@@ -60,7 +62,7 @@
 - `.env.example` - Example environment configuration
 - `docker-compose.yml` - Local development environment with PostgreSQL and Redis
 - `Dockerfile` - Production container configuration
-- `README.md` - Project documentation and setup instructions
+- `README.md` - Comprehensive project documentation with setup, development, and deployment instructions
 
 ### Notes
 
@@ -79,8 +81,8 @@
   - [x] 1.5 Set up Docker and docker-compose for local development environment
   - [x] 1.6 Create .env.example with all required environment variables
   - [x] 1.7 Initialize FastAPI application structure with proper directory layout
-  - [ ] 1.8 Set up Alembic for database migrations
-  - [ ] 1.9 Create basic README.md with setup and development instructions
+  - [x] 1.8 Set up Alembic for database migrations
+  - [x] 1.9 Create basic README.md with setup and development instructions
 
 - [ ] 2.0 Database Models and Schema
 
