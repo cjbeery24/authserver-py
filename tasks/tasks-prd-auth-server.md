@@ -95,9 +95,9 @@
   - [x] 2.7 Implement OAuth2Client model with fields: id, client_id, client_secret, name, redirect_uris, scopes
   - [x] 2.8 Implement OAuth2Token model with fields: id, client_id, user_id, token_type, access_token, refresh_token, expires_at
   - [x] 2.9 Implement MFASecret model with fields: id, user_id, secret, backup_codes, is_enabled, created_at
-  - [ ] 2.10 Implement AuditLog model with fields: id, user_id, action, resource, ip_address, user_agent, created_at
-  - [ ] 2.11 Create database indexes for performance optimization
-  - [ ] 2.12 Generate initial Alembic migration for all models
+  - [x] 2.10 Implement AuditLog model with fields: id, user_id, action, resource, ip_address, user_agent, created_at
+  - [x] 2.11 Create database indexes for performance optimization
+  - [x] 2.12 Generate initial Alembic migration for all models
 
 - [ ] 3.0 Core Authentication System
 

@@ -3,7 +3,7 @@ OAuth 2.0 Token model for storing access and refresh tokens.
 """
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -21,6 +21,14 @@ class OAuth2Token(BaseModel):
     refresh_token = Column(Text, nullable=True, index=True)  # Only for refresh tokens
     expires_at = Column(DateTime, nullable=False, index=True)
     scope = Column(Text, nullable=True)  # JSON string of granted scopes
+
+    # Additional indexes for performance optimization
+    __table_args__ = (
+        # Composite index for token lookup by client and type
+        Index('idx_oauth2_token_client_type', 'client_id', 'token_type'),
+        # Index for token cleanup queries (expired tokens)
+        Index('idx_oauth2_token_created', 'created_at'),
+    )
 
     # Relationships
     client = relationship("OAuth2Client", backref="tokens")

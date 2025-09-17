@@ -11,5 +11,9 @@ from app.models.role_permission import RolePermission
 from app.models.oauth2_client import OAuth2Client
 from app.models.oauth2_token import OAuth2Token
 from app.models.mfa_secret import MFASecret
+from app.models.audit_log import AuditLog
 
-__all__ = ["Base", "User", "Role", "Permission", "UserRole", "RolePermission", "OAuth2Client", "OAuth2Token", "MFASecret"]
+__all__ = [
+    "Base", "User", "Role", "Permission", "UserRole", "RolePermission",
+    "OAuth2Client", "OAuth2Token", "MFASecret", "AuditLog"
+]
