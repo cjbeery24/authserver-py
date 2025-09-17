@@ -86,12 +86,12 @@
 
 - [ ] 2.0 Database Models and Schema
 
-  - [ ] 2.1 Create database connection configuration and session management
-  - [ ] 2.2 Implement User model with fields: id, username, email, password_hash, is_active, created_at, updated_at
-  - [ ] 2.3 Implement Role model with fields: id, name, description, created_at
-  - [ ] 2.4 Implement Permission model with fields: id, resource, action, created_at
-  - [ ] 2.5 Implement UserRole model for many-to-many user-role relationships
-  - [ ] 2.6 Implement RolePermission model for many-to-many role-permission relationships
+  - [x] 2.1 Create database connection configuration and session management
+  - [x] 2.2 Implement User model with fields: id, username, email, password_hash, is_active, created_at, updated_at
+  - [x] 2.3 Implement Role model with fields: id, name, description, created_at
+  - [x] 2.4 Implement Permission model with fields: id, resource, action, created_at
+  - [x] 2.5 Implement UserRole model for many-to-many user-role relationships
+  - [x] 2.6 Implement RolePermission model for many-to-many role-permission relationships
   - [ ] 2.7 Implement OAuth2Client model with fields: id, client_id, client_secret, name, redirect_uris, scopes
   - [ ] 2.8 Implement OAuth2Token model with fields: id, client_id, user_id, token_type, access_token, refresh_token, expires_at
   - [ ] 2.9 Implement MFASecret model with fields: id, user_id, secret, backup_codes, is_enabled, created_at
