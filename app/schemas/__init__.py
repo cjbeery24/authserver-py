@@ -18,6 +18,7 @@ __all__ = [
     "MFAEnableResponse",
     "MFAVerifyRequest",
     "MFABackupCodeRequest",
+    "LogoutResponse",
     "ErrorResponse",
     # Password reset schemas
     "PasswordResetRequest",

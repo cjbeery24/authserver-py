@@ -214,6 +214,22 @@ class MFABackupCodeRequest(BaseModel):
         }
 
 
+class LogoutResponse(BaseModel):
+    """Response for logout endpoint."""
+    message: str = Field(..., description="Success message")
+    success: bool = Field(default=True, description="Whether logout was successful")
+    tokens_invalidated: int = Field(default=1, description="Number of tokens invalidated")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "Successfully logged out",
+                "success": True,
+                "tokens_invalidated": 1
+            }
+        }
+
+
 class ErrorResponse(BaseModel):
     """Generic error response model."""
     detail: str

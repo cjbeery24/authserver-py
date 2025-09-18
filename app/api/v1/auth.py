@@ -18,13 +18,16 @@ from app.core.security import (
     MFAHandler,
     SecurityAudit,
     FailedLoginTracker,
-    TokenGenerator
+    TokenGenerator,
+    TokenBlacklist
 )
 from app.core.redis import get_redis
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.models.password_reset import PasswordResetToken
+from app.models.user_token import UserToken
 from app.core.config import settings
+from sqlalchemy import and_
 from app.core.email import email_service
 from app.schemas.auth import (
     UserRegistrationRequest,
@@ -32,7 +35,8 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
     MFATokenRequest,
-    MFARequiredResponse
+    MFARequiredResponse,
+    LogoutResponse
 )
 from app.schemas.password_reset import (
     PasswordResetRequest,
@@ -81,6 +85,7 @@ async def _authenticate_user(
     username: str,
     password: str,
     db: Session,
+    redis_client,
     mfa_token: Optional[str] = None
 ) -> tuple[User, bool]:
     """
@@ -100,7 +105,6 @@ async def _authenticate_user(
     if not user:
         # Record failed login attempt
         if settings.auth_rate_limit_enabled:
-            redis_client = await get_redis()
             await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
 
         raise HTTPException(
@@ -113,7 +117,6 @@ async def _authenticate_user(
     if not PasswordHasher.verify_password(password, user.password_hash):
         # Record failed login attempt
         if settings.auth_rate_limit_enabled:
-            redis_client = await get_redis()
             await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
 
         raise HTTPException(
@@ -154,7 +157,6 @@ async def _authenticate_user(
         if not mfa_valid:
             # Record failed MFA attempt
             if settings.auth_rate_limit_enabled:
-                redis_client = await get_redis()
                 await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
 
             raise HTTPException(
@@ -165,14 +167,13 @@ async def _authenticate_user(
 
     # Reset failed login attempts on successful authentication
     if settings.auth_rate_limit_enabled:
-        redis_client = await get_redis()
         await FailedLoginTracker.reset_failed_attempts(client_ip, redis_client)
 
     return user, False  # Authentication successful, no MFA required
 
 
-def _create_token_response(user: User) -> TokenResponse:
-    """Create token response for authenticated user."""
+def _create_token_response(user: User, db: Session, ip_address: str = None, user_agent: str = None) -> TokenResponse:
+    """Create token response for authenticated user and store tokens in database."""
     token_data = {
         "sub": str(user.id),
         "username": user.username,
@@ -180,6 +181,16 @@ def _create_token_response(user: User) -> TokenResponse:
     }
 
     tokens = TokenManager.create_token_pair(token_data)
+
+    # Store tokens in database for tracking
+    TokenManager.store_user_tokens(
+        db_session=db,
+        user_id=user.id,
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        ip_address=ip_address,
+        user_agent=user_agent
+    )
 
     return TokenResponse(
         access_token=tokens["access_token"],
@@ -189,6 +200,24 @@ def _create_token_response(user: User) -> TokenResponse:
         user_id=user.id,
         username=user.username
     )
+
+
+async def _revoke_token_in_db(token: str, db: Session, reason: str = "logout", ip_address: str = None, user_agent: str = None) -> bool:
+    """Revoke a token in the database by its JTI for audit purposes."""
+    jti = SecurityAudit.get_token_jti(token)
+    if not jti:
+        return False
+    
+    token_record = db.query(UserToken).filter(UserToken.token_jti == jti).first()
+    if token_record and not token_record.is_revoked:
+        token_record.revoke(
+            reason=reason,
+            ip_address=ip_address,
+            user_agent=user_agent
+        )
+        db.commit()
+        return True
+    return False
 
 
 @router.post("/register", response_model=UserRegistrationResponse, status_code=status.HTTP_201_CREATED,
@@ -296,12 +325,16 @@ async def login_for_access_token(
     - Returns MFA challenge if MFA is enabled
     - Returns tokens if no MFA required
     """
+    # Get Redis client for token validation
+    redis_client = await get_redis()
+
     # Authenticate user (without MFA token)
     user, requires_mfa = await _authenticate_user(
         request=request,
         username=form_data.username,
         password=form_data.password,
-        db=db
+        db=db,
+        redis_client=redis_client
     )
 
     # If MFA is required, return MFA challenge
@@ -314,7 +347,12 @@ async def login_for_access_token(
         )
 
     # No MFA required, return tokens
-    return _create_token_response(user)
+    return _create_token_response(
+        user=user,
+        db=db,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent')
+    )
 
 
 @router.post("/token/mfa", response_model=TokenResponse,
@@ -334,12 +372,16 @@ async def verify_mfa_token(
     - Verifies MFA token (TOTP or backup code)
     - Returns access and refresh tokens
     """
+    # Get Redis client for token validation
+    redis_client = await get_redis()
+
     # Authenticate user with MFA token
     user, requires_mfa = await _authenticate_user(
         request=request,
         username=mfa_data.username,
         password=mfa_data.password,
         db=db,
+        redis_client=redis_client,
         mfa_token=mfa_data.mfa_token
     )
 
@@ -356,7 +398,12 @@ async def verify_mfa_token(
         )
 
     # Authentication successful, return tokens
-    return _create_token_response(user)
+    return _create_token_response(
+        user=user,
+        db=db,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent')
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse,
@@ -373,14 +420,19 @@ async def refresh_access_token(
     - Issues new access token
     - Maintains user session
     """
-    # Validate refresh token
-    payload = TokenManager.verify_token(refresh_token, "refresh")
+    # Get Redis client for token validation
+    redis_client = await get_redis()
+
+    # Validate refresh token (now checks blacklist)
+    payload = await TokenManager.verify_token(refresh_token, "refresh", redis_client)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
+            detail="Invalid, expired, or blacklisted refresh token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Token revocation is now checked in verify_token() via Redis blacklist
 
     user_id = int(payload.get("sub"))
     if not user_id:
@@ -406,6 +458,16 @@ async def refresh_access_token(
 
     tokens = TokenManager.create_token_pair(token_data)
 
+    # Store new tokens in database
+    TokenManager.store_user_tokens(
+        db_session=db,
+        user_id=user.id,
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent')
+    )
+
     return TokenResponse(
         access_token=tokens["access_token"],
         refresh_token=tokens["refresh_token"],
@@ -427,14 +489,19 @@ async def get_current_user(
     - Validates access token
     - Returns user profile data
     """
-    # Validate access token
-    payload = TokenManager.verify_token(token, "access")
+    # Get Redis client for token validation
+    redis_client = await get_redis()
+
+    # Validate access token (now checks blacklist)
+    payload = await TokenManager.verify_token(token, "access", redis_client)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token",
+            detail="Invalid, expired, or blacklisted authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Token revocation is now checked in verify_token() via Redis blacklist
 
     user_id = int(payload.get("sub"))
     if not user_id:
@@ -458,6 +525,170 @@ async def get_current_user(
         is_active=user.is_active,
         created_at=user.created_at.isoformat() if user.created_at else None
     )
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout endpoint - invalidates the current access token.
+
+    - Blacklists the current access token
+    - Logs the logout event
+    - Returns success confirmation
+    """
+    # Get client IP for security logging
+    client_ip = request.client.host if request.client else "unknown"
+
+    try:
+        # Get Redis client for token blacklisting
+        redis_client = await get_redis()
+
+        # Verify the token and get user info for logging
+        payload = await TokenManager.verify_token(token, "access", redis_client)
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        user_id = payload.get("sub")
+
+        # Token revocation is now checked in verify_token() via Redis blacklist
+
+        # Blacklist the access token in Redis for immediate effect
+        token_blacklisted = await TokenBlacklist.blacklist_token(token, redis_client)
+
+        # Also mark the token as revoked in the database for audit purposes
+        db_token_revoked = await _revoke_token_in_db(
+            token=token,
+            db=db,
+            reason="single_logout",
+            ip_address=client_ip,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        if token_blacklisted:
+            logger.info(f"User {user_id} logged out successfully from IP: {client_ip} (Redis: {token_blacklisted}, DB: {db_token_revoked})")
+            return LogoutResponse(
+                message="Successfully logged out",
+                success=True,
+                tokens_invalidated=1
+            )
+        else:
+            logger.warning(f"Failed to blacklist token for user {user_id} from IP: {client_ip}")
+            # Even if blacklisting fails, we consider the logout successful from user's perspective
+            # The token will expire naturally
+            return LogoutResponse(
+                message="Logged out (token will expire naturally)",
+                success=True,
+                tokens_invalidated=0
+            )
+
+    except Exception as e:
+        logger.error(f"Error during logout for IP {client_ip}: {str(e)}")
+        # Don't fail the logout request due to internal errors
+        # The token will expire naturally if there's an issue
+        return LogoutResponse(
+            message="Logged out (token will expire naturally)",
+            success=True,
+            tokens_invalidated=0
+        )
+
+
+@router.post("/logout-all", response_model=LogoutResponse)
+async def logout_all_devices(
+    request: Request,
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    """
+    Logout from all devices - invalidates all tokens for the current user.
+
+    - Blacklists all active tokens for the user
+    - Forces logout from all devices/sessions
+    - Logs the logout event
+    """
+    # Get client IP for security logging
+    client_ip = request.client.host if request.client else "unknown"
+
+    try:
+        # Get Redis client
+        redis_client = await get_redis()
+
+        # Verify the token to get user info
+        payload = await TokenManager.verify_token(token, "access", redis_client)
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Token revocation is now checked in verify_token() via Redis blacklist
+
+        user_id = int(payload.get("sub"))
+
+        # Get the user to verify they exist and are active
+        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or deactivated"
+            )
+
+        # Blacklist the current token first
+        await TokenBlacklist.blacklist_token(token, redis_client)
+
+        # Blacklist all user tokens using Redis
+        tokens_blacklisted = await TokenBlacklist.blacklist_all_user_tokens(
+            user_id=user_id,
+            redis_client=redis_client,
+            db_session=db
+        )
+
+        # Also mark all user tokens as revoked in database for audit purposes
+        db_tokens_revoked = UserToken.revoke_user_tokens(
+            db_session=db,
+            user_id=user_id,
+            reason="logout_all",
+            ip_address=client_ip,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        # Invalidate all password reset tokens for the user as well
+        existing_reset_tokens = db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.is_used == False
+        ).all()
+
+        for reset_token in existing_reset_tokens:
+            reset_token.mark_as_used(ip_address=client_ip, user_agent=request.headers.get('User-Agent'))
+
+        db.commit()
+
+        logger.info(f"User {user_id} logged out from all devices from IP: {client_ip}, blacklisted {tokens_blacklisted} tokens, marked {db_tokens_revoked} as revoked in DB")
+
+        return LogoutResponse(
+            message="Successfully logged out from all devices",
+            success=True,
+            tokens_invalidated=tokens_blacklisted
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during logout-all for IP {client_ip}: {str(e)}")
+        # Don't fail the logout request due to internal errors
+        return LogoutResponse(
+            message="Logged out from all devices (some tokens may remain active)",
+            success=True,
+            tokens_invalidated=0
+        )
 
 
 @router.post("/password-reset/request", response_model=PasswordResetResponse,
@@ -643,4 +874,44 @@ async def confirm_password_reset(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password"
+        )
+
+
+@router.post("/admin/cleanup-tokens", response_model=dict)
+async def cleanup_expired_tokens(
+    db: Session = Depends(get_db)
+):
+    """
+    Admin endpoint to cleanup expired and revoked tokens.
+
+    This endpoint removes tokens that are both expired and either:
+    - Revoked tokens
+    - Tokens older than the cleanup threshold (30 days by default)
+
+    Returns cleanup statistics.
+    """
+    try:
+        # Cleanup expired tokens
+        tokens_cleaned = UserToken.cleanup_expired_tokens(db_session=db)
+
+        # Also cleanup expired password reset tokens
+        password_reset_cleaned = PasswordResetToken.cleanup_expired_tokens(db_session=db)
+
+        db.commit()
+
+        logger.info(f"Token cleanup completed: {tokens_cleaned} user tokens, {password_reset_cleaned} password reset tokens")
+
+        return {
+            "message": "Token cleanup completed successfully",
+            "user_tokens_cleaned": tokens_cleaned,
+            "password_reset_tokens_cleaned": password_reset_cleaned,
+            "total_cleaned": tokens_cleaned + password_reset_cleaned
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error during token cleanup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cleanup tokens"
         )

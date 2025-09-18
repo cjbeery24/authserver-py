@@ -21,7 +21,7 @@ class TokenManager:
     """Utilities for JWT token creation and verification."""
 
     @staticmethod
-    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True) -> str:
         """Create a JWT access token."""
         to_encode = data.copy()
         if expires_delta:
@@ -30,11 +30,17 @@ class TokenManager:
             expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_access_token_expire_minutes)
 
         to_encode.update({"exp": expire, "type": "access"})
+
+        # Include JTI (JWT ID) for token tracking if requested
+        if include_jti:
+            jti = secrets.token_hex(16)  # Generate unique JTI
+            to_encode.update({"jti": jti})
+
         encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
         return encoded_jwt
 
     @staticmethod
-    def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True) -> str:
         """Create a JWT refresh token."""
         to_encode = data.copy()
         if expires_delta:
@@ -43,16 +49,36 @@ class TokenManager:
             expire = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days)
 
         to_encode.update({"exp": expire, "type": "refresh"})
+
+        # Include JTI (JWT ID) for token tracking if requested
+        if include_jti:
+            jti = secrets.token_hex(16)  # Generate unique JTI
+            to_encode.update({"jti": jti})
+
         encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
         return encoded_jwt
 
     @staticmethod
-    def verify_token(token: str, token_type: str = "access") -> Optional[dict]:
+    async def verify_token(token: str, token_type: str = "access", redis_client = None) -> Optional[dict]:
         """Verify and decode a JWT token."""
         try:
             payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
             if payload.get("type") != token_type:
                 return None
+
+            # Check if token is blacklisted (if redis client is provided)
+            if redis_client:
+                # Check both full token and JTI blacklists
+                if await TokenBlacklist.is_token_blacklisted(token, redis_client):
+                    logger.warning(f"Attempt to use blacklisted token")
+                    return None
+                
+                # Also check JTI-based blacklist (for logout-all functionality)
+                jti = payload.get("jti")
+                if jti and await TokenBlacklist.is_token_blacklisted_by_jti(jti, redis_client):
+                    logger.warning(f"Attempt to use token with blacklisted JTI: {jti}")
+                    return None
+
             return payload
         except JWTError as e:
             logger.warning(f"JWT verification failed: {e}")
@@ -93,9 +119,9 @@ class TokenManager:
             return None
 
     @staticmethod
-    def refresh_access_token(refresh_token: str) -> Optional[str]:
+    async def refresh_access_token(refresh_token: str, redis_client = None) -> Optional[str]:
         """Create a new access token from a valid refresh token."""
-        payload = TokenManager.verify_token(refresh_token, "refresh")
+        payload = await TokenManager.verify_token(refresh_token, "refresh", redis_client)
         if not payload:
             return None
 
@@ -340,6 +366,64 @@ class SecurityAudit:
         return f"rate_limit:{identifier}:{action}:{window}:{timestamp}"
 
     @staticmethod
+    def get_token_jti(token: str) -> Optional[str]:
+        """Extract JTI (JWT ID) from a token."""
+        payload = TokenManager.decode_token(token)
+        if payload:
+            return payload.get("jti")
+        return None
+
+    @staticmethod
+    def get_token_expiry(token: str) -> Optional[datetime]:
+        """Get token expiry time from the token itself."""
+        payload = TokenManager.decode_token(token)
+        if payload and payload.get("exp"):
+            return datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        return None
+
+    @staticmethod
+    def store_user_tokens(
+        db_session,
+        user_id: int,
+        access_token: str,
+        refresh_token: str,
+        ip_address: str = None,
+        user_agent: str = None
+    ):
+        """Store issued tokens in the database for tracking."""
+        from app.models.user_token import UserToken
+
+        access_jti = TokenManager.get_token_jti(access_token)
+        refresh_jti = TokenManager.get_token_jti(refresh_token)
+
+        access_expiry = TokenManager.get_token_expiry(access_token)
+        refresh_expiry = TokenManager.get_token_expiry(refresh_token)
+
+        # Store access token record
+        if access_jti and access_expiry:
+            access_token_record = UserToken.create_token_record(
+                user_id=user_id,
+                token_jti=access_jti,
+                token_type="access",
+                expires_at=access_expiry,
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+            db_session.add(access_token_record)
+
+        # Store refresh token record
+        if refresh_jti and refresh_expiry:
+            refresh_token_record = UserToken.create_token_record(
+                user_id=user_id,
+                token_jti=refresh_jti,
+                token_type="refresh",
+                expires_at=refresh_expiry,
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+            db_session.add(refresh_token_record)
+
+    @staticmethod
     def get_security_headers() -> dict[str, str]:
         """Get security headers for responses."""
         return {
@@ -410,3 +494,129 @@ class FailedLoginTracker:
             return settings.auth_failed_login_penalty_minutes * 60  # Normal penalty
         
         return 0
+
+
+class TokenBlacklist:
+    """Token blacklist for secure logout and token invalidation."""
+
+    @staticmethod
+    def get_blacklist_key(token: str) -> str:
+        """Generate Redis key for token blacklist."""
+        return f"token_blacklist:{token}"
+
+    @staticmethod
+    async def blacklist_token(token: str, redis_client, expiry_seconds: int = None) -> bool:
+        """
+        Add token to blacklist with expiration.
+
+        Args:
+            token: The token to blacklist
+            redis_client: Redis client instance
+            expiry_seconds: Custom expiry time, defaults to token's remaining TTL
+
+        Returns:
+            bool: True if successfully blacklisted
+        """
+        key = TokenBlacklist.get_blacklist_key(token)
+
+        if expiry_seconds is None:
+            # Get token's remaining TTL from the token itself
+            payload = TokenManager.decode_token(token)
+            if payload and payload.get("exp"):
+                from datetime import datetime
+                expiry_seconds = int(payload["exp"] - datetime.now(timezone.utc).timestamp())
+                # Ensure minimum of 1 second and maximum of 30 days
+                expiry_seconds = max(1, min(expiry_seconds, 30 * 24 * 60 * 60))
+
+        if expiry_seconds:
+            await redis_client.setex(key, expiry_seconds, "blacklisted")
+            return True
+
+        return False
+
+    @staticmethod
+    async def is_token_blacklisted(token: str, redis_client) -> bool:
+        """
+        Check if token is blacklisted.
+
+        Args:
+            token: Token to check
+            redis_client: Redis client instance
+
+        Returns:
+            bool: True if token is blacklisted
+        """
+        key = TokenBlacklist.get_blacklist_key(token)
+        result = await redis_client.get(key)
+        return result is not None
+
+    @staticmethod
+    async def blacklist_all_user_tokens(user_id: int, redis_client, db_session) -> int:
+        """
+        Blacklist all active tokens for a user by reading from database and blacklisting each.
+
+        Args:
+            user_id: User ID whose tokens should be blacklisted
+            redis_client: Redis client instance
+            db_session: Database session to fetch active tokens
+
+        Returns:
+            int: Number of tokens blacklisted
+        """
+        from app.models.user_token import UserToken
+        from sqlalchemy import and_
+
+        # Get all active (non-revoked, non-expired) tokens for the user
+        active_tokens = db_session.query(UserToken).filter(
+            and_(
+                UserToken.user_id == user_id,
+                UserToken.is_revoked == False,
+                UserToken.expires_at > datetime.now(timezone.utc)
+            )
+        ).all()
+
+        blacklisted_count = 0
+        for token_record in active_tokens:
+            # Generate the actual token string from stored data
+            # Since we store JTI, we need to blacklist by JTI
+            jti_key = f"token_blacklist_jti:{token_record.token_jti}"
+            
+            # Calculate remaining TTL for this token
+            remaining_seconds = int((token_record.expires_at - datetime.now(timezone.utc)).total_seconds())
+            if remaining_seconds > 0:
+                await redis_client.setex(jti_key, remaining_seconds, "blacklisted")
+                blacklisted_count += 1
+
+        logger.info(f"Blacklisted {blacklisted_count} tokens for user {user_id}")
+        return blacklisted_count
+
+    @staticmethod
+    async def is_token_blacklisted_by_jti(jti: str, redis_client) -> bool:
+        """
+        Check if token is blacklisted by JTI.
+
+        Args:
+            jti: JWT ID to check
+            redis_client: Redis client instance
+
+        Returns:
+            bool: True if token JTI is blacklisted
+        """
+        if not jti:
+            return False
+            
+        jti_key = f"token_blacklist_jti:{jti}"
+        result = await redis_client.get(jti_key)
+        return result is not None
+
+    @staticmethod
+    async def cleanup_expired_blacklist(redis_client):
+        """
+        Cleanup expired blacklist entries.
+        Redis handles this automatically with EXPIRE, so this is mainly for monitoring.
+        """
+        # Redis automatically expires keys, so this is just for logging/metrics
+        logger.debug("Token blacklist cleanup completed (Redis handles expiration automatically)")
+
+
+# Enhanced utility functions
