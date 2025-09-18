@@ -3,6 +3,7 @@ Pydantic schemas for request/response models.
 """
 
 from .auth import *  # Authentication schemas
+from .password_reset import *  # Password reset schemas
 
 __all__ = [
     # Authentication schemas
@@ -13,11 +14,15 @@ __all__ = [
     "MFATokenRequest",
     "MFARequiredResponse",
     "MFALoginRequest",
-    "PasswordResetRequest",
-    "PasswordResetConfirmRequest",
     "MFAEnableRequest",
     "MFAEnableResponse",
     "MFAVerifyRequest",
     "MFABackupCodeRequest",
-    "ErrorResponse"
+    "ErrorResponse",
+    # Password reset schemas
+    "PasswordResetRequest",
+    "PasswordResetConfirm",
+    "PasswordResetResponse",
+    "PasswordResetConfirmResponse",
+    "PasswordResetTokenInfo"
 ]

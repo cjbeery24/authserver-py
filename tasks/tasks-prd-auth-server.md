@@ -104,8 +104,8 @@
   - [x] 3.1 Implement password hashing utilities using bcrypt/Argon2
   - [x] 3.2 Create JWT token generation and validation functions
   - [x] 3.3 Implement user registration endpoint with input validation
-  - [ ] 3.4 Implement user login endpoint with credential verification
-  - [ ] 3.5 Implement password reset functionality with email verification
+  - [x] 3.4 Implement user login endpoint with credential verification
+  - [x] 3.5 Implement password reset functionality with email verification
   - [ ] 3.6 Create user logout endpoint with token invalidation
   - [ ] 3.7 Implement password complexity validation rules
   - [ ] 3.8 Create authentication middleware for protected endpoints

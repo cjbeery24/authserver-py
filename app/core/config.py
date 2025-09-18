@@ -118,9 +118,14 @@ class Settings(BaseSettings):
     email_host: str = Field(default="smtp.gmail.com", env="EMAIL_HOST")
     email_port: int = Field(default=587, env="EMAIL_PORT")
     email_use_tls: bool = Field(default=True, env="EMAIL_USE_TLS")
-    email_user: str = Field(default="", env="EMAIL_USER")
+    email_use_ssl: bool = Field(default=False, env="EMAIL_USE_SSL")
+    email_username: str = Field(default="", env="EMAIL_USERNAME")
     email_password: str = Field(default="", env="EMAIL_PASSWORD")
     email_from: str = Field(default="noreply@authserver.com", env="EMAIL_FROM")
+
+    # Password Reset Configuration
+    password_reset_token_expire_hours: int = Field(default=1, env="PASSWORD_RESET_TOKEN_EXPIRE_HOURS")
+    frontend_url: str = Field(default="http://localhost:3000", env="FRONTEND_URL")
     
     # Logging & Monitoring
     log_format: str = Field(default="json", env="LOG_FORMAT")
