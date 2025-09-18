@@ -101,7 +101,7 @@
 
 - [ ] 3.0 Core Authentication System
 
-  - [ ] 3.1 Implement password hashing utilities using bcrypt/Argon2
+  - [x] 3.1 Implement password hashing utilities using bcrypt/Argon2
   - [ ] 3.2 Create JWT token generation and validation functions
   - [ ] 3.3 Implement user registration endpoint with input validation
   - [ ] 3.4 Implement user login endpoint with credential verification

@@ -3,7 +3,7 @@ Configuration management for the authentication server.
 Uses Pydantic Settings for environment variable handling and validation.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Set
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
@@ -52,10 +52,14 @@ class Settings(BaseSettings):
     
     # Password Security
     password_min_length: int = Field(default=8, env="PASSWORD_MIN_LENGTH")
+    password_strong_length: int = Field(default=12, env="PASSWORD_STRONG_LENGTH")
+    password_very_strong_length: int = Field(default=16, env="PASSWORD_VERY_STRONG_LENGTH")
+    password_unique_chars_threshold: int = Field(default=10, env="PASSWORD_UNIQUE_CHARS_THRESHOLD")
     password_require_uppercase: bool = Field(default=True, env="PASSWORD_REQUIRE_UPPERCASE")
     password_require_lowercase: bool = Field(default=True, env="PASSWORD_REQUIRE_LOWERCASE")
     password_require_digits: bool = Field(default=True, env="PASSWORD_REQUIRE_DIGITS")
     password_require_special_chars: bool = Field(default=True, env="PASSWORD_REQUIRE_SPECIAL_CHARS")
+    special_characters: str = Field(default="!@#$%^&*()_+-=[]{}|;:,.<>?", env="SPECIAL_CHARACTERS")
     
     # MFA Settings
     mfa_totp_issuer: str = Field(default="AuthServer", env="MFA_TOTP_ISSUER")
@@ -63,6 +67,21 @@ class Settings(BaseSettings):
     mfa_totp_period: int = Field(default=30, env="MFA_TOTP_PERIOD")
     mfa_backup_codes_count: int = Field(default=10, env="MFA_BACKUP_CODES_COUNT")
     mfa_backup_codes_expiry_days: int = Field(default=365, env="MFA_BACKUP_CODES_EXPIRY_DAYS")
+    mfa_backup_code_length: int = Field(default=8, env="MFA_BACKUP_CODE_LENGTH")
+    
+    # Token Generation Settings
+    default_token_length: int = Field(default=32, env="DEFAULT_TOKEN_LENGTH")
+    reset_token_length: int = Field(default=32, env="RESET_TOKEN_LENGTH")
+    verification_code_length: int = Field(default=6, env="VERIFICATION_CODE_LENGTH")
+    
+    # Suspicious Activity Detection
+    max_failed_attempts: int = Field(default=5, env="MAX_FAILED_ATTEMPTS")
+    min_user_agent_length: int = Field(default=10, env="MIN_USER_AGENT_LENGTH")
+    suspicious_ips: Set[str] = Field(default={"127.0.0.1", "0.0.0.0"}, env="SUSPICIOUS_IPS")
+    suspicious_activity_time_window: int = Field(default=5, env="SUSPICIOUS_ACTIVITY_TIME_WINDOW")
+    
+    # Input Sanitization
+    max_input_length: int = Field(default=255, env="MAX_INPUT_LENGTH")
     
     # OpenID Connect & OAuth 2.0
     oidc_issuer_url: str = Field(default="http://localhost:8000", env="OIDC_ISSUER_URL")
@@ -131,8 +150,6 @@ class Settings(BaseSettings):
     sms_auth_token: str = Field(default="", env="SMS_AUTH_TOKEN")
     sms_from_number: str = Field(default="", env="SMS_FROM_NUMBER")
     
-
-    
     @field_validator("database_url", mode="before")
     @classmethod
     def build_database_url(cls, v, info):
@@ -152,6 +169,16 @@ class Settings(BaseSettings):
         password_part = f":{values.get('redis_password')}@" if values.get('redis_password') else ""
         return f"redis://{password_part}{values.get('redis_host', 'localhost')}:{values.get('redis_port', 6379)}/{values.get('redis_db', 0)}"
     
+    @field_validator("suspicious_ips", mode="before")
+    @classmethod
+    def parse_suspicious_ips(cls, v):
+        """Parse comma-separated suspicious IPs into a set."""
+        if isinstance(v, set):
+            return v
+        if isinstance(v, str):
+            return {ip.strip() for ip in v.split(",") if ip.strip()}
+        return {"127.0.0.1", "0.0.0.0"}
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
