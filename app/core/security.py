@@ -564,6 +564,114 @@ class FailedLoginTracker:
         return 0
 
 
+class SecureTokenHasher:
+    """Secure hashing utilities for tokens and backup codes."""
+
+    @staticmethod
+    def hash_token(token: str) -> str:
+        """
+        Hash a token using SHA-256 with salt for secure storage.
+
+        Args:
+            token: The token to hash
+
+        Returns:
+            str: Hexadecimal hash of the token
+        """
+        if not token:
+            raise ValueError("Token cannot be empty")
+
+        # Use the configured security salt
+        salt = settings.security_salt
+        if not salt:
+            raise ValueError("Security salt is not configured")
+
+        # Combine salt and token
+        salt_bytes = salt.encode('utf-8')
+        token_bytes = token.encode('utf-8')
+        salted_token = salt_bytes + token_bytes
+
+        # Hash using SHA-256
+        hash_obj = hashlib.sha256(salted_token)
+        return hash_obj.hexdigest()
+
+    @staticmethod
+    def verify_token_hash(token: str, stored_hash: str) -> bool:
+        """
+        Verify a token against its stored hash.
+
+        Args:
+            token: The plain token to verify
+            stored_hash: The stored hash to compare against
+
+        Returns:
+            bool: True if token matches the hash
+        """
+        if not token or not stored_hash:
+            return False
+
+        computed_hash = SecureTokenHasher.hash_token(token)
+        return computed_hash == stored_hash
+
+    @staticmethod
+    def hash_backup_codes(codes: list) -> dict:
+        """
+        Hash a list of backup codes.
+
+        Args:
+            codes: List of plain backup codes
+
+        Returns:
+            dict: Dictionary mapping hashed codes to their original values (for validation)
+        """
+        if not codes:
+            return {}
+
+        hashed_codes = {}
+        for code in codes:
+            if not code:
+                continue
+            # Hash each code and map it to the original for validation
+            hashed_codes[SecureTokenHasher.hash_token(code)] = code
+
+        return hashed_codes
+
+    @staticmethod
+    def verify_backup_code_hash(code: str, hashed_codes: dict) -> tuple[bool, str]:
+        """
+        Verify a backup code against stored hashes.
+
+        Args:
+            code: The plain backup code to verify
+            hashed_codes: Dictionary of hashed codes mapping to original codes
+
+        Returns:
+            tuple: (is_valid, original_code) - original_code is empty if invalid
+        """
+        if not code or not hashed_codes:
+            return False, ""
+
+        computed_hash = SecureTokenHasher.hash_token(code)
+        if computed_hash in hashed_codes:
+            return True, hashed_codes[computed_hash]
+
+        return False, ""
+
+    @staticmethod
+    def generate_salt(length: int = 32) -> str:
+        """
+        Generate a cryptographically secure salt.
+
+        Args:
+            length: Length of the salt in bytes
+
+        Returns:
+            str: Hexadecimal representation of the salt
+        """
+        salt_bytes = secrets.token_bytes(length)
+        return salt_bytes.hex()
+
+
 class TokenBlacklist:
     """Token blacklist for secure logout and token invalidation."""
 

@@ -81,7 +81,7 @@ def upgrade() -> None:
     op.create_table('mfa_secrets',
     sa.Column('user_id', sa.Integer(), nullable=False),
     sa.Column('secret', sa.String(length=32), nullable=False),
-    sa.Column('backup_codes', sa.Text(), nullable=False),
+    sa.Column('backup_codes', sa.Text(), nullable=False, server_default='{}'),
     sa.Column('is_enabled', sa.Boolean(), nullable=False),
     sa.Column('backup_codes_expiry', sa.DateTime(), nullable=True),
     sa.Column('id', sa.Integer(), nullable=False),

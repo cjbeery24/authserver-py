@@ -19,7 +19,8 @@ from app.core.security import (
     SecurityAudit,
     FailedLoginTracker,
     TokenGenerator,
-    TokenBlacklist
+    TokenBlacklist,
+    SecureTokenHasher
 )
 from app.core.redis import get_redis
 from app.models.user import User
@@ -751,11 +752,8 @@ async def confirm_password_reset(
     # Get client IP for security logging
     client_ip = request.client.host if request.client else "unknown"
 
-    # Find valid reset token
-    reset_token = db.query(PasswordResetToken).filter(
-        PasswordResetToken.token == reset_confirm.token,
-        PasswordResetToken.is_used == False
-    ).first()
+    # Find valid reset token using secure hash verification
+    reset_token = PasswordResetToken.find_by_token(db, reset_confirm.token)
 
     if not reset_token:
         logger.warning(f"Invalid password reset token attempt from IP: {client_ip}")

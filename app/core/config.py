@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = Field(default=30, env="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     jwt_refresh_token_expire_days: int = Field(default=7, env="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
     
+    # Token Security
+    security_salt: str = Field(default="default_salt_change_in_production", env="SECURITY_SALT")
+    
     # Password Security
     password_min_length: int = Field(default=8, env="PASSWORD_MIN_LENGTH")
     password_strong_length: int = Field(default=12, env="PASSWORD_STRONG_LENGTH")

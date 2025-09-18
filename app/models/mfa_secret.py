@@ -19,7 +19,7 @@ class MFASecret(BaseModel):
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
     secret = Column(String(32), nullable=False)  # TOTP secret key
-    backup_codes = Column(Text, default="[]", nullable=False)  # JSON array of backup codes
+    backup_codes = Column(Text, default="{}", nullable=False)  # JSON object of hashed backup codes
     is_enabled = Column(Boolean, default=False, nullable=False)
     backup_codes_expiry = Column(DateTime, nullable=True)  # When backup codes expire
 
@@ -45,6 +45,8 @@ class MFASecret(BaseModel):
 
     def generate_backup_codes(self, count=10, code_length=8, expiry_days=365):
         """Generate backup codes for MFA recovery."""
+        from app.core.security import SecureTokenHasher
+        
         codes = []
         for _ in range(count):
             # Generate alphanumeric code
@@ -52,34 +54,53 @@ class MFASecret(BaseModel):
             code = ''.join(secrets.choice(chars) for _ in range(code_length))
             codes.append(code)
 
-        self.backup_codes = json.dumps(codes)
+        # Hash the codes for secure storage
+        hashed_codes = SecureTokenHasher.hash_backup_codes(codes)
+        self.backup_codes = json.dumps(hashed_codes)
         self.backup_codes_expiry = datetime.now(timezone.utc) + timedelta(days=expiry_days)
-        return codes
+        return codes  # Return plain codes to user
 
     def get_backup_codes(self):
-        """Get list of backup codes."""
-        if not self.backup_codes or self.backup_codes == "[]":
+        """Get list of original backup codes from the hashed mapping."""
+        if not self.backup_codes or self.backup_codes == "{}":
             return []
         try:
-            codes = json.loads(self.backup_codes)
-            return codes if codes else []
+            hashed_codes = json.loads(self.backup_codes)
+            if not hashed_codes:  # Empty object
+                return []
+            # Return the original codes (values in the hash mapping)
+            return list(hashed_codes.values())
         except (json.JSONDecodeError, TypeError):
             return []
 
     def validate_backup_code(self, code):
-        """Validate and consume a backup code."""
-        if not self.backup_codes or self.backup_codes == "[]" or self.is_backup_codes_expired:
+        """Validate and consume a backup code using secure hash verification."""
+        from app.core.security import SecureTokenHasher
+        
+        if not self.backup_codes or self.backup_codes == "{}" or self.is_backup_codes_expired:
             return False
 
         try:
-            codes = json.loads(self.backup_codes)
-            if not codes:  # Empty array
+            hashed_codes = json.loads(self.backup_codes)
+            if not hashed_codes:  # Empty object
                 return False
-            if code in codes:
-                # Remove the used code
-                codes.remove(code)
-                self.backup_codes = json.dumps(codes) if codes else "[]"
-                return True
+
+            # Verify the code using secure hash comparison
+            is_valid, original_code = SecureTokenHasher.verify_backup_code_hash(code, hashed_codes)
+            if is_valid:
+                # Remove the used code from the hash mapping
+                # Find the hash that corresponds to this code
+                code_hash = None
+                for hash_key, stored_code in hashed_codes.items():
+                    if stored_code == original_code:
+                        code_hash = hash_key
+                        break
+                
+                if code_hash:
+                    del hashed_codes[code_hash]
+                    self.backup_codes = json.dumps(hashed_codes) if hashed_codes else "{}"
+                    return True
+
         except (json.JSONDecodeError, TypeError):
             pass
 

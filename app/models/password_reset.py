@@ -19,13 +19,13 @@ class PasswordResetToken(BaseModel):
     __tablename__ = "password_reset_tokens"
 
     __table_args__ = (
-        Index('idx_password_reset_token', 'token'),
+        Index('idx_password_reset_token_hash', 'token_hash'),
         Index('idx_password_reset_user_created', 'user_id', 'created_at'),
         Index('idx_password_reset_expires', 'expires_at'),
     )
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    token = Column(String(255), unique=True, nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)  # SHA-256 hash
     expires_at = Column(DateTime, nullable=False, index=True)
     is_used = Column(Boolean, default=False, nullable=False)
     used_at = Column(DateTime, nullable=True)
@@ -61,20 +61,64 @@ class PasswordResetToken(BaseModel):
         
         Args:
             user_id: ID of the user requesting password reset
-            token: Secure reset token
+            token: Secure reset token (will be hashed before storage)
             expiry_hours: Hours until token expires (default: 1 hour)
         
         Returns:
             PasswordResetToken: New reset token instance
         """
+        from app.core.security import SecureTokenHasher
+        
         expires_at = datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
+        token_hash = SecureTokenHasher.hash_token(token)
         
         return cls(
             user_id=user_id,
-            token=token,
+            token_hash=token_hash,
             expires_at=expires_at,
             is_used=False
         )
+
+    @classmethod
+    def find_by_token(cls, db_session, token: str):
+        """
+        Find a password reset token by its plain text value.
+        
+        Args:
+            db_session: Database session
+            token: Plain text token to search for
+            
+        Returns:
+            PasswordResetToken: Token instance if found and valid, None otherwise
+        """
+        from app.core.security import SecureTokenHasher
+        
+        if not token:
+            return None
+            
+        token_hash = SecureTokenHasher.hash_token(token)
+        
+        return db_session.query(cls).filter(
+            cls.token_hash == token_hash,
+            cls.is_used == False
+        ).first()
+
+    def verify_token(self, token: str) -> bool:
+        """
+        Verify if the provided token matches this reset token.
+        
+        Args:
+            token: Plain text token to verify
+            
+        Returns:
+            bool: True if token matches and is valid
+        """
+        from app.core.security import SecureTokenHasher
+        
+        if not token or self.is_used or self.is_expired:
+            return False
+            
+        return SecureTokenHasher.verify_token_hash(token, self.token_hash)
 
     @classmethod
     def cleanup_expired_tokens(cls, db_session):
