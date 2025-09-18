@@ -167,7 +167,7 @@ class PasswordStrength:
     """Password strength validation utilities."""
 
     @staticmethod
-    def validate_password(password: str) -> Tuple[bool, str]:
+    def validate_password(password: str, username: str = None) -> Tuple[bool, str]:
         """Validate password strength according to configured requirements."""
         if len(password) < settings.password_min_length:
             return False, f"Password must be at least {settings.password_min_length} characters long"
@@ -184,7 +184,75 @@ class PasswordStrength:
         if settings.password_require_special_chars and not any(c in settings.special_characters for c in password):
             return False, "Password must contain at least one special character"
 
+        # Additional security checks
+        if settings.password_check_common_patterns:
+            # Check for sequential characters
+            if PasswordStrength._has_sequential_chars(password):
+                return False, "Password must not contain sequential characters (e.g., 'abc', '123')"
+
+            # Check for repeated characters
+            if PasswordStrength._has_repeated_chars(password):
+                return False, "Password must not contain too many repeated characters"
+
+        # Check if password is too similar to username
+        if username and PasswordStrength._is_similar_to_username(password, username):
+            return False, "Password must not be too similar to your username"
+
         return True, "Password meets strength requirements"
+
+    @staticmethod
+    def _has_sequential_chars(password: str, threshold: int = 3) -> bool:
+        """Check for sequential characters (e.g., 'abc', '123', 'xyz')."""
+        password_lower = password.lower()
+
+        # Check for sequential letters
+        for i in range(len(password_lower) - threshold + 1):
+            seq = password_lower[i:i+threshold]
+            if len(seq) == threshold:
+                # Check if all characters are consecutive in alphabet
+                if all(ord(seq[j+1]) - ord(seq[j]) == 1 for j in range(threshold-1)):
+                    return True
+
+        # Check for sequential digits
+        for i in range(len(password) - threshold + 1):
+            seq = password[i:i+threshold]
+            if seq.isdigit():
+                # Check if digits are consecutive
+                if all(int(seq[j+1]) - int(seq[j]) == 1 for j in range(threshold-1)):
+                    return True
+
+        return False
+
+    @staticmethod
+    def _has_repeated_chars(password: str, threshold: int = 3) -> bool:
+        """Check for too many repeated characters."""
+        for i in range(len(password) - threshold + 1):
+            if all(c == password[i] for c in password[i:i+threshold]):
+                return True
+        return False
+
+    @staticmethod
+    def _is_similar_to_username(password: str, username: str) -> bool:
+        """Check if password is too similar to username."""
+        if not username or len(username) < 3:
+            return False
+
+        password_lower = password.lower()
+        username_lower = username.lower()
+
+        # Check if username is contained in password
+        if username_lower in password_lower:
+            return True
+
+        # Check if password contains significant portion of username
+        username_chars = set(username_lower)
+        password_chars = set(password_lower)
+
+        # If more than 80% of username characters are in password, it's suspicious
+        if len(username_chars.intersection(password_chars)) / len(username_chars) > 0.8:
+            return True
+
+        return False
 
     @staticmethod
     def calculate_strength_score(password: str) -> int:
@@ -221,9 +289,9 @@ class PasswordHasher:
     """Password hashing utilities using bcrypt."""
 
     @staticmethod
-    def hash_password(password: str) -> str:
+    def hash_password(password: str, username: str = None) -> str:
         """Hash a password with strength validation."""
-        is_valid, message = PasswordStrength.validate_password(password)
+        is_valid, message = PasswordStrength.validate_password(password, username)
         if not is_valid:
             raise PasswordValidationError(message)
         return pwd_context.hash(password)

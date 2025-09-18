@@ -237,7 +237,7 @@ async def register_user(
     """
     # Validate password strength
     try:
-        PasswordStrength.validate_password(user_data.password)
+        PasswordStrength.validate_password(user_data.password, user_data.username)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -262,7 +262,7 @@ async def register_user(
 
     try:
         # Hash the password
-        hashed_password = PasswordHasher.hash_password(user_data.password)
+        hashed_password = PasswordHasher.hash_password(user_data.password, user_data.username)
 
         # Create new user
         new_user = User(
@@ -831,10 +831,10 @@ async def confirm_password_reset(
 
     try:
         # Validate new password strength
-        PasswordStrength.validate_password(reset_confirm.new_password)
+        PasswordStrength.validate_password(reset_confirm.new_password, user.username)
         
         # Hash the new password
-        new_password_hash = PasswordHasher.hash_password(reset_confirm.new_password)
+        new_password_hash = PasswordHasher.hash_password(reset_confirm.new_password, user.username)
         
         # Update user password
         user.password_hash = new_password_hash

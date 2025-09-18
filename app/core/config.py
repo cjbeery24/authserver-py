@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     password_require_lowercase: bool = Field(default=True, env="PASSWORD_REQUIRE_LOWERCASE")
     password_require_digits: bool = Field(default=True, env="PASSWORD_REQUIRE_DIGITS")
     password_require_special_chars: bool = Field(default=True, env="PASSWORD_REQUIRE_SPECIAL_CHARS")
+    password_check_common_patterns: bool = Field(default=True, env="PASSWORD_CHECK_COMMON_PATTERNS")
     special_characters: str = Field(default="!@#$%^&*()_+-=[]{}|;:,.<>?", env="SPECIAL_CHARACTERS")
     
     # MFA Settings
