@@ -58,6 +58,79 @@ class TokenManager:
             logger.warning(f"JWT verification failed: {e}")
             return None
 
+    @staticmethod
+    def decode_token(token: str) -> Optional[dict]:
+        """Decode a JWT token without verification (for introspection)."""
+        try:
+            # Decode without verification for token introspection
+            payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+            return payload
+        except JWTError:
+            return None
+
+    @staticmethod
+    def is_token_expired(token: str) -> bool:
+        """Check if a JWT token is expired."""
+        try:
+            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+            exp = payload.get("exp")
+            if not exp:
+                return False
+            return datetime.fromtimestamp(exp, tz=timezone.utc) < datetime.now(timezone.utc)
+        except JWTError:
+            return True
+
+    @staticmethod
+    def get_token_expiration(token: str) -> Optional[datetime]:
+        """Get token expiration time."""
+        try:
+            payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+            exp = payload.get("exp")
+            if exp:
+                return datetime.fromtimestamp(exp, tz=timezone.utc)
+            return None
+        except JWTError:
+            return None
+
+    @staticmethod
+    def refresh_access_token(refresh_token: str) -> Optional[str]:
+        """Create a new access token from a valid refresh token."""
+        payload = TokenManager.verify_token(refresh_token, "refresh")
+        if not payload:
+            return None
+
+        # Remove token-specific claims
+        user_data = {k: v for k, v in payload.items() if k not in ["exp", "type", "iat", "nbf"]}
+        return TokenManager.create_access_token(user_data)
+
+    @staticmethod
+    def create_token_pair(user_data: dict) -> dict:
+        """Create both access and refresh tokens for a user."""
+        access_token = TokenManager.create_access_token(user_data)
+        refresh_token = TokenManager.create_refresh_token(user_data)
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.jwt_access_token_expire_minutes * 60,  # seconds
+        }
+
+    @staticmethod
+    def get_token_metadata(token: str) -> Optional[dict]:
+        """Get token metadata without full payload."""
+        payload = TokenManager.decode_token(token)
+        if not payload:
+            return None
+
+        return {
+            "user_id": payload.get("sub"),
+            "token_type": payload.get("type"),
+            "issued_at": payload.get("iat"),
+            "expires_at": payload.get("exp"),
+            "is_expired": TokenManager.is_token_expired(token),
+        }
+
 
 class PasswordValidationError(Exception):
     """Exception raised when password validation fails."""
@@ -276,3 +349,64 @@ class SecurityAudit:
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Strict-Transport-Security": "max-age=31536000; includeSubDomains" if not settings.debug else "",
         }
+
+
+class FailedLoginTracker:
+    """Track failed login attempts for progressive rate limiting."""
+
+    @staticmethod
+    def get_penalty_key(ip_address: str) -> str:
+        """Generate Redis key for failed login tracking."""
+        return f"failed_login_penalty:{ip_address}"
+
+    @staticmethod
+    async def record_failed_attempt(ip_address: str, redis_client) -> int:
+        """Record a failed login attempt and return current count."""
+        key = FailedLoginTracker.get_penalty_key(ip_address)
+        # Increment counter and set expiry
+        count = await redis_client.incr(key)
+        await redis_client.expire(key, settings.auth_failed_login_penalty_minutes * 60)  # Convert to seconds
+        return count
+
+    @staticmethod
+    async def get_failed_attempts(ip_address: str, redis_client) -> int:
+        """Get number of failed attempts for an IP."""
+        key = FailedLoginTracker.get_penalty_key(ip_address)
+        count = await redis_client.get(key)
+        return int(count) if count else 0
+
+    @staticmethod
+    async def reset_failed_attempts(ip_address: str, redis_client):
+        """Reset failed attempts counter after successful login."""
+        key = FailedLoginTracker.get_penalty_key(ip_address)
+        await redis_client.delete(key)
+
+    @staticmethod
+    async def is_rate_limited(ip_address: str, redis_client) -> bool:
+        """Check if IP should be rate limited based on failed attempts."""
+        failed_count = await FailedLoginTracker.get_failed_attempts(ip_address, redis_client)
+
+        # Progressive blocking thresholds based on failed attempts
+        if failed_count >= 10:
+            return True  # Block after 10+ failures
+        elif failed_count >= 5:
+            return True  # Block after 5+ failures  
+        elif failed_count >= 3:
+            # Block after 3+ failures but with shorter penalty
+            return True
+
+        return False  # Allow requests with < 3 failures
+
+    @staticmethod
+    async def get_penalty_duration(ip_address: str, redis_client) -> int:
+        """Get penalty duration in seconds based on failed attempts."""
+        failed_count = await FailedLoginTracker.get_failed_attempts(ip_address, redis_client)
+        
+        if failed_count >= 10:
+            return settings.auth_failed_login_penalty_minutes * 60 * 4  # 4x penalty
+        elif failed_count >= 5:
+            return settings.auth_failed_login_penalty_minutes * 60 * 2  # 2x penalty
+        elif failed_count >= 3:
+            return settings.auth_failed_login_penalty_minutes * 60  # Normal penalty
+        
+        return 0

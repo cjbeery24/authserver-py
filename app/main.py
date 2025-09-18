@@ -6,10 +6,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from fastapi_limiter import FastAPILimiter
+from fastapi_limiter.depends import RateLimiter
+from contextlib import asynccontextmanager
 import time
 import logging
 
 from app.core.config import settings, get_cors_origins, get_cors_methods, get_cors_headers
+from app.core.redis import get_redis
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +21,21 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Lifespan context manager for startup/shutdown events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events."""
+    # Startup
+    if settings.auth_rate_limit_enabled:
+        redis_client = await get_redis()
+        await FastAPILimiter.init(redis_client)
+        logger.info("Rate limiter initialized with Redis backend")
+
+    yield
+
+    # Shutdown (cleanup if needed)
+    pass
 
 # Create FastAPI application
 app = FastAPI(
@@ -26,6 +45,7 @@ app = FastAPI(
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
     openapi_url="/openapi.json" if settings.debug else None,
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -90,15 +110,15 @@ async def root():
 
 # Include API routers
 from app.api.v1.health import router as health_router
+from app.api.v1.auth import router as auth_router
 
 app.include_router(health_router, prefix="/api/v1", tags=["health"])
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
 
 # TODO: Add more routers as we implement them
-# from app.api.v1.auth import router as auth_router
 # from app.api.v1.users import router as users_router
 # from app.api.v1.oauth import router as oauth_router
 
-# app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
 # app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
 # app.include_router(oauth_router, prefix="/api/v1/oauth", tags=["oauth"])
 

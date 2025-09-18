@@ -105,6 +105,13 @@ class Settings(BaseSettings):
     rate_limit_requests_per_minute: int = Field(default=60, env="RATE_LIMIT_REQUESTS_PER_MINUTE")
     rate_limit_requests_per_hour: int = Field(default=1000, env="RATE_LIMIT_REQUESTS_PER_HOUR")
     rate_limit_requests_per_day: int = Field(default=10000, env="RATE_LIMIT_REQUESTS_PER_DAY")
+
+    # Authentication Rate Limiting
+    auth_rate_limit_enabled: bool = Field(default=True, env="AUTH_RATE_LIMIT_ENABLED")
+    auth_registration_per_hour: int = Field(default=5, env="AUTH_REGISTRATION_PER_HOUR")
+    auth_login_per_minute: int = Field(default=5, env="AUTH_LOGIN_PER_MINUTE")
+    auth_token_refresh_per_hour: int = Field(default=20, env="AUTH_TOKEN_REFRESH_PER_HOUR")
+    auth_failed_login_penalty_minutes: int = Field(default=15, env="AUTH_FAILED_LOGIN_PENALTY_MINUTES")
     
     # Email Configuration
     email_enabled: bool = Field(default=False, env="EMAIL_ENABLED")

@@ -25,7 +25,8 @@ dependencies = [
     "httpx (>=0.28.1,<0.29.0)",
     "requests (>=2.32.4,<3.0.0)",
     "redis (>=6.4.0,<7.0.0)",
-    "email-validator (>=2.2.0,<3.0.0)"
+    "email-validator (>=2.2.0,<3.0.0)",
+    "fastapi-limiter (>=0.1.5,<0.2.0)"
 ]
 
 [tool.poetry]
