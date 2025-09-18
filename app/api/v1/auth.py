@@ -29,6 +29,7 @@ from app.models.user_token import UserToken
 from app.core.config import settings
 from sqlalchemy import and_
 from app.core.email import email_service
+from app.middleware import get_current_user_or_401, get_raw_token_or_401
 from app.schemas.auth import (
     UserRegistrationRequest,
     UserRegistrationResponse,
@@ -480,62 +481,36 @@ async def refresh_access_token(
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    request: Request,
+    current_user: User = Depends(get_current_user_or_401)
 ):
     """
     Get current authenticated user information.
 
-    - Validates access token
-    - Returns user profile data
+    - Uses authentication middleware for automatic token validation
+    - Returns user profile data from middleware context
     """
-    # Get Redis client for token validation
-    redis_client = await get_redis()
-
-    # Validate access token (now checks blacklist)
-    payload = await TokenManager.verify_token(token, "access", redis_client)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid, expired, or blacklisted authentication token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Token revocation is now checked in verify_token() via Redis blacklist
-
-    user_id = int(payload.get("sub"))
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload"
-        )
-
-    # Get user data
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or deactivated"
-        )
-
+    # User is already validated by middleware and available in current_user
     return UserResponse(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        is_active=user.is_active,
-        created_at=user.created_at.isoformat() if user.created_at else None
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None
     )
 
 
 @router.post("/logout", response_model=LogoutResponse)
 async def logout(
     request: Request,
-    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user_or_401),
+    token: str = Depends(get_raw_token_or_401),
     db: Session = Depends(get_db)
 ):
     """
     Logout endpoint - invalidates the current access token.
 
+    - Uses authentication middleware for user validation
     - Blacklists the current access token
     - Logs the logout event
     - Returns success confirmation
@@ -547,18 +522,9 @@ async def logout(
         # Get Redis client for token blacklisting
         redis_client = await get_redis()
 
-        # Verify the token and get user info for logging
-        payload = await TokenManager.verify_token(token, "access", redis_client)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        # User is already validated by middleware
+        user_id = current_user.id
 
-        user_id = payload.get("sub")
-
-        # Token revocation is now checked in verify_token() via Redis blacklist
 
         # Blacklist the access token in Redis for immediate effect
         token_blacklisted = await TokenBlacklist.blacklist_token(token, redis_client)
@@ -603,12 +569,14 @@ async def logout(
 @router.post("/logout-all", response_model=LogoutResponse)
 async def logout_all_devices(
     request: Request,
-    token: str = Depends(oauth2_scheme),
+    current_user: User = Depends(get_current_user_or_401),
+    token: str = Depends(get_raw_token_or_401),
     db: Session = Depends(get_db)
 ):
     """
     Logout from all devices - invalidates all tokens for the current user.
 
+    - Uses authentication middleware for user validation
     - Blacklists all active tokens for the user
     - Forces logout from all devices/sessions
     - Logs the logout event
@@ -620,26 +588,9 @@ async def logout_all_devices(
         # Get Redis client
         redis_client = await get_redis()
 
-        # Verify the token to get user info
-        payload = await TokenManager.verify_token(token, "access", redis_client)
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        # Token revocation is now checked in verify_token() via Redis blacklist
-
-        user_id = int(payload.get("sub"))
-
-        # Get the user to verify they exist and are active
-        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or deactivated"
-            )
+        # User is already validated by middleware
+        user_id = current_user.id
+        user = current_user
 
         # Blacklist the current token first
         await TokenBlacklist.blacklist_token(token, redis_client)

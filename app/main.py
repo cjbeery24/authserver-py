@@ -12,6 +12,9 @@ from contextlib import asynccontextmanager
 import time
 import logging
 
+# Import custom middleware
+from app.middleware import AuthMiddleware, OptionalAuthMiddleware
+
 from app.core.config import settings, get_cors_origins, get_cors_methods, get_cors_headers
 from app.core.redis import get_redis
 
@@ -63,6 +66,11 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["*"] if settings.debug else ["localhost", "127.0.0.1"]
 )
+
+# Add authentication middleware (must come before other middleware that might need auth)
+if settings.auth_middleware_enabled:
+    app.add_middleware(AuthMiddleware)
+    logger.info("Authentication middleware enabled")
 
 # Request timing middleware
 @app.middleware("http")

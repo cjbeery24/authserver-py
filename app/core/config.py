@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     password_require_special_chars: bool = Field(default=True, env="PASSWORD_REQUIRE_SPECIAL_CHARS")
     password_check_common_patterns: bool = Field(default=True, env="PASSWORD_CHECK_COMMON_PATTERNS")
     special_characters: str = Field(default="!@#$%^&*()_+-=[]{}|;:,.<>?", env="SPECIAL_CHARACTERS")
+
+    # Authentication Middleware Settings
+    auth_middleware_enabled: bool = Field(default=True, env="AUTH_MIDDLEWARE_ENABLED")
     
     # MFA Settings
     mfa_totp_issuer: str = Field(default="AuthServer", env="MFA_TOTP_ISSUER")

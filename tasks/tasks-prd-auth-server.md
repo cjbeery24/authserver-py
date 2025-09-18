@@ -108,7 +108,7 @@
   - [x] 3.5 Implement password reset functionality with email verification
   - [x] 3.6 Create user logout endpoint with token invalidation
   - [x] 3.7 Implement password complexity validation rules
-  - [ ] 3.8 Create authentication middleware for protected endpoints
+  - [x] 3.8 Create authentication middleware for protected endpoints
   - [ ] 3.9 Implement user session management and token refresh logic
 
 - [ ] 4.0 OpenID Connect and OAuth 2.0 Implementation
