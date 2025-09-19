@@ -558,6 +558,62 @@ class FailedLoginTracker:
         return 0
 
 
+class FailedRefreshTracker:
+    """Track failed refresh token attempts for progressive rate limiting."""
+
+    @staticmethod
+    def get_penalty_key(ip_address: str) -> str:
+        """Generate Redis key for failed refresh tracking."""
+        return f"failed_refresh_penalty:{ip_address}"
+
+    @staticmethod
+    async def record_failed_attempt(ip_address: str, redis_client) -> int:
+        """Record a failed refresh attempt and return current count."""
+        key = FailedRefreshTracker.get_penalty_key(ip_address)
+        # Increment counter and set expiry
+        count = await redis_client.incr(key)
+        await redis_client.expire(key, settings.auth_failed_login_penalty_minutes * 60)  # Same as login penalty
+        return count
+
+    @staticmethod
+    async def get_failed_attempts(ip_address: str, redis_client) -> int:
+        """Get number of failed refresh attempts for an IP."""
+        key = FailedRefreshTracker.get_penalty_key(ip_address)
+        count = await redis_client.get(key)
+        return int(count) if count else 0
+
+    @staticmethod
+    async def reset_failed_attempts(ip_address: str, redis_client):
+        """Reset failed refresh attempts counter after successful refresh."""
+        key = FailedRefreshTracker.get_penalty_key(ip_address)
+        await redis_client.delete(key)
+
+    @staticmethod
+    async def is_rate_limited(ip_address: str, redis_client) -> bool:
+        """Check if IP should be rate limited based on failed refresh attempts."""
+        failed_count = await FailedRefreshTracker.get_failed_attempts(ip_address, redis_client)
+
+        # Progressive blocking thresholds (more aggressive than login)
+        if failed_count >= 5:
+            return True  # Block after 5+ failures (stricter than login)
+        elif failed_count >= 3:
+            return True  # Block after 3+ failures
+
+        return False  # Allow requests with < 3 failures
+
+    @staticmethod
+    async def get_penalty_duration(ip_address: str, redis_client) -> int:
+        """Get penalty duration in seconds based on failed refresh attempts."""
+        failed_count = await FailedRefreshTracker.get_failed_attempts(ip_address, redis_client)
+        
+        if failed_count >= 5:
+            return settings.auth_failed_login_penalty_minutes * 60 * 3  # 3x penalty
+        elif failed_count >= 3:
+            return settings.auth_failed_login_penalty_minutes * 60 * 2  # 2x penalty
+        
+        return 0
+
+
 class SecureTokenHasher:
     """Secure hashing utilities for tokens and backup codes."""
 

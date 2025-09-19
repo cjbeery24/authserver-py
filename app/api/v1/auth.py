@@ -18,6 +18,7 @@ from app.core.security import (
     MFAHandler,
     SecurityAudit,
     FailedLoginTracker,
+    FailedRefreshTracker,
     TokenGenerator,
     TokenBlacklist,
     SecureTokenHasher
@@ -77,6 +78,31 @@ async def progressive_rate_limit(request: Request):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Too many failed attempts. Try again later. ({failed_count} failures)",
+            headers={"Retry-After": str(penalty_duration)}
+        )
+
+
+# Custom progressive rate limiting for refresh token attempts
+async def progressive_refresh_rate_limit(request: Request):
+    """
+    Progressive rate limiting based on failed refresh token attempts.
+    Applies stricter limits to IPs with recent refresh failures.
+    """
+    if not settings.auth_rate_limit_enabled:
+        return
+
+    client_ip = request.client.host if request.client else "unknown"
+    redis_client = await get_redis()
+    
+    # Check if IP should be rate limited based on failed refresh attempts
+    is_limited = await FailedRefreshTracker.is_rate_limited(client_ip, redis_client)
+    
+    if is_limited:
+        failed_count = await FailedRefreshTracker.get_failed_attempts(client_ip, redis_client)
+        penalty_duration = await FailedRefreshTracker.get_penalty_duration(client_ip, redis_client)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed refresh attempts. Try again later. ({failed_count} failures)",
             headers={"Retry-After": str(penalty_duration)}
         )
 
@@ -409,7 +435,10 @@ async def verify_mfa_token(
 
 
 @router.post("/refresh", response_model=TokenResponse,
-            dependencies=[Depends(RateLimiter(times=settings.auth_token_refresh_per_hour, hours=1))])
+            dependencies=[
+                Depends(RateLimiter(times=settings.auth_token_refresh_per_hour, hours=1)),
+                Depends(progressive_refresh_rate_limit)
+            ])
 async def refresh_access_token(
     request: Request,
     refresh_token: str,
@@ -418,16 +447,25 @@ async def refresh_access_token(
     """
     Refresh an access token using a valid refresh token.
 
-    - Validates refresh token
+    - Validates refresh token with progressive rate limiting
     - Issues new access token
     - Maintains user session
+    - Tracks failed refresh attempts for security
     """
+    # Get client IP for failed refresh tracking
+    client_ip = request.client.host if request.client else "unknown"
+    
     # Get Redis client for token validation
     redis_client = await get_redis()
 
     # Validate refresh token (now checks blacklist)
     payload = await TokenManager.verify_token(refresh_token, "refresh", redis_client)
     if not payload:
+        # Record failed refresh attempt
+        if settings.auth_rate_limit_enabled:
+            await FailedRefreshTracker.record_failed_attempt(client_ip, redis_client)
+        
+        logger.warning(f"Failed refresh token attempt from IP: {client_ip}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid, expired, or blacklisted refresh token",
@@ -469,6 +507,12 @@ async def refresh_access_token(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get('User-Agent')
     )
+
+    # Reset failed refresh attempts on successful refresh
+    if settings.auth_rate_limit_enabled:
+        await FailedRefreshTracker.reset_failed_attempts(client_ip, redis_client)
+
+    logger.info(f"Token refresh successful for user {user_id} from IP: {client_ip}")
 
     return TokenResponse(
         access_token=tokens["access_token"],
