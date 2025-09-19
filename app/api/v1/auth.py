@@ -23,6 +23,7 @@ from app.core.security import (
     TokenBlacklist,
     SecureTokenHasher
 )
+from app.core.errors import AuthError
 from app.core.redis import get_redis
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
@@ -75,11 +76,7 @@ async def progressive_rate_limit(request: Request):
     if is_limited:
         failed_count = await FailedLoginTracker.get_failed_attempts(client_ip, redis_client)
         penalty_duration = await FailedLoginTracker.get_penalty_duration(client_ip, redis_client)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many failed attempts. Try again later. ({failed_count} failures)",
-            headers={"Retry-After": str(penalty_duration)}
-        )
+        raise AuthError.too_many_login_attempts(failed_count, penalty_duration)
 
 
 # Custom progressive rate limiting for refresh token attempts
@@ -100,11 +97,7 @@ async def progressive_refresh_rate_limit(request: Request):
     if is_limited:
         failed_count = await FailedRefreshTracker.get_failed_attempts(client_ip, redis_client)
         penalty_duration = await FailedRefreshTracker.get_penalty_duration(client_ip, redis_client)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many failed refresh attempts. Try again later. ({failed_count} failures)",
-            headers={"Retry-After": str(penalty_duration)}
-        )
+        raise AuthError.too_many_refresh_attempts(failed_count, penalty_duration)
 
 
 # Helper function for authentication logic
@@ -135,11 +128,7 @@ async def _authenticate_user(
         if settings.auth_rate_limit_enabled:
             await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
 
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthError.invalid_credentials()
 
     # Verify password
     if not PasswordHasher.verify_password(password, user.password_hash):
@@ -147,18 +136,11 @@ async def _authenticate_user(
         if settings.auth_rate_limit_enabled:
             await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
 
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthError.invalid_credentials()
 
     # Check if user is active
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is deactivated"
-        )
+        raise AuthError.account_deactivated()
 
     # Check MFA if enabled for user
     mfa_secret = db.query(MFASecret).filter(
@@ -187,11 +169,7 @@ async def _authenticate_user(
             if settings.auth_rate_limit_enabled:
                 await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
 
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid MFA token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            raise AuthError.invalid_mfa_token()
 
     # Reset failed login attempts on successful authentication
     if settings.auth_rate_limit_enabled:
@@ -301,26 +279,17 @@ async def register_user(
     try:
         PasswordStrength.validate_password(user_data.password, user_data.username)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password validation failed: {str(e)}"
-        )
+        raise AuthError.password_validation_failed(str(e))
 
     # Check if username already exists
     existing_user = db.query(User).filter(User.username == user_data.username).first()
     if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already registered"
-        )
+        raise AuthError.username_taken()
 
     # Check if email already exists
     existing_email = db.query(User).filter(User.email == user_data.email).first()
     if existing_email:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered"
-        )
+        raise AuthError.email_taken()
 
     try:
         # Hash the password
@@ -364,10 +333,7 @@ async def register_user(
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to register user"
-        )
+        raise AuthError.registration_failed()
 
 
 @router.post("/token", response_model=Union[TokenResponse, MFARequiredResponse],
@@ -455,10 +421,7 @@ async def verify_mfa_token(
     ).first()
 
     if not mfa_secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="MFA not enabled for this account"
-        )
+        raise AuthError.mfa_not_enabled()
 
     # Authentication successful, return tokens
     return await _create_token_response(
@@ -502,28 +465,18 @@ async def refresh_access_token(
             await FailedRefreshTracker.record_failed_attempt(client_ip, redis_client)
         
         logger.warning(f"Failed refresh token attempt from IP: {client_ip}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid, expired, or blacklisted refresh token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise AuthError.invalid_refresh_token()
 
     # Token revocation is now checked in verify_token() via Redis blacklist
 
     user_id = int(payload.get("sub"))
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload"
-        )
+        raise AuthError.invalid_token_payload()
 
     # Verify user still exists and is active
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or deactivated"
-        )
+        raise AuthError.user_not_found()
 
     # Create new token pair with token rotation (blacklist old refresh token)
     token_response = await _create_token_response(
@@ -821,26 +774,17 @@ async def confirm_password_reset(
 
     if not reset_token:
         logger.warning(f"Invalid password reset token attempt from IP: {client_ip}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token"
-        )
+        raise AuthError.invalid_reset_token()
 
     if reset_token.is_expired:
         logger.warning(f"Expired password reset token attempt for user {reset_token.user_id} from IP: {client_ip}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reset token has expired"
-        )
+        raise AuthError.expired_reset_token()
 
     # Get the user
     user = db.query(User).filter(User.id == reset_token.user_id).first()
     if not user or not user.is_active:
         logger.warning(f"Password reset attempt for invalid/inactive user {reset_token.user_id} from IP: {client_ip}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid reset token"
-        )
+        raise AuthError.invalid_reset_token()
 
     try:
         # Validate new password strength
@@ -879,15 +823,9 @@ async def confirm_password_reset(
         logger.error(f"Error confirming password reset for user {reset_token.user_id}: {str(e)}")
         
         if "Password validation failed" in str(e):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e)
-            )
+            raise AuthError.password_validation_failed(str(e))
         
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to reset password"
-        )
+        raise AuthError.password_reset_failed()
 
 
 @router.post("/admin/cleanup-tokens", response_model=dict)
@@ -924,7 +862,4 @@ async def cleanup_expired_tokens(
     except Exception as e:
         db.rollback()
         logger.error(f"Error during token cleanup: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to cleanup tokens"
-        )
+        raise AuthError.cleanup_failed()
