@@ -24,7 +24,7 @@ from app.core.security import (
     SecureTokenHasher
 )
 from app.core.errors import AuthError
-from app.core.redis import get_redis
+from app.core.redis import get_redis_dependency
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.models.password_reset import PasswordResetToken
@@ -59,7 +59,10 @@ logger = logging.getLogger(__name__)
 
 
 # Custom rate limiting dependency that uses FailedLoginTracker
-async def progressive_rate_limit(request: Request):
+async def progressive_rate_limit(
+    request: Request,
+    redis_client = Depends(get_redis_dependency)
+):
     """
     Progressive rate limiting based on failed login attempts.
     Applies stricter limits to IPs with recent failures.
@@ -68,7 +71,6 @@ async def progressive_rate_limit(request: Request):
         return
 
     client_ip = request.client.host if request.client else "unknown"
-    redis_client = await get_redis()
     
     # Check if IP should be rate limited based on failed attempts
     is_limited = await FailedLoginTracker.is_rate_limited(client_ip, redis_client)
@@ -80,7 +82,10 @@ async def progressive_rate_limit(request: Request):
 
 
 # Custom progressive rate limiting for refresh token attempts
-async def progressive_refresh_rate_limit(request: Request):
+async def progressive_refresh_rate_limit(
+    request: Request,
+    redis_client = Depends(get_redis_dependency)
+):
     """
     Progressive rate limiting based on failed refresh token attempts.
     Applies stricter limits to IPs with recent refresh failures.
@@ -89,7 +94,6 @@ async def progressive_refresh_rate_limit(request: Request):
         return
 
     client_ip = request.client.host if request.client else "unknown"
-    redis_client = await get_redis()
     
     # Check if IP should be rate limited based on failed refresh attempts
     is_limited = await FailedRefreshTracker.is_rate_limited(client_ip, redis_client)
@@ -344,7 +348,8 @@ async def register_user(
 async def login_for_access_token(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     OAuth2 compatible token endpoint for user authentication.
@@ -353,9 +358,6 @@ async def login_for_access_token(
     - Returns MFA challenge if MFA is enabled
     - Returns tokens if no MFA required
     """
-    # Get Redis client for token validation
-    redis_client = await get_redis()
-
     # Authenticate user (without MFA token)
     user, requires_mfa = await _authenticate_user(
         request=request,
@@ -392,7 +394,8 @@ async def login_for_access_token(
 async def verify_mfa_token(
     request: Request,
     mfa_data: MFATokenRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Verify MFA token and complete authentication.
@@ -401,9 +404,6 @@ async def verify_mfa_token(
     - Verifies MFA token (TOTP or backup code)
     - Returns access and refresh tokens
     """
-    # Get Redis client for token validation
-    redis_client = await get_redis()
-
     # Authenticate user with MFA token
     user, requires_mfa = await _authenticate_user(
         request=request,
@@ -441,7 +441,8 @@ async def verify_mfa_token(
 async def refresh_access_token(
     request: Request,
     refresh_token: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Refresh an access token using a valid refresh token.
@@ -453,9 +454,6 @@ async def refresh_access_token(
     """
     # Get client IP for failed refresh tracking
     client_ip = request.client.host if request.client else "unknown"
-    
-    # Get Redis client for token validation
-    redis_client = await get_redis()
 
     # Validate refresh token (now checks blacklist)
     payload = await TokenManager.verify_token(refresh_token, "refresh", redis_client)
@@ -523,7 +521,8 @@ async def logout(
     request: Request,
     current_user: User = Depends(get_current_user_or_401),
     token: str = Depends(get_raw_token_or_401),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Logout endpoint - invalidates the current access token.
@@ -537,9 +536,6 @@ async def logout(
     client_ip = request.client.host if request.client else "unknown"
 
     try:
-        # Get Redis client for token blacklisting
-        redis_client = await get_redis()
-
         # User is already validated by middleware
         user_id = current_user.id
 
@@ -589,7 +585,8 @@ async def logout_all_devices(
     request: Request,
     current_user: User = Depends(get_current_user_or_401),
     token: str = Depends(get_raw_token_or_401),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Logout from all devices - invalidates all tokens for the current user.
@@ -603,9 +600,6 @@ async def logout_all_devices(
     client_ip = request.client.host if request.client else "unknown"
 
     try:
-        # Get Redis client
-        redis_client = await get_redis()
-
         # User is already validated by middleware
         user_id = current_user.id
         user = current_user

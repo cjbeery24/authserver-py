@@ -48,6 +48,16 @@ async def get_redis():
         await init_redis()
     return redis_client
 
+
+async def get_redis_dependency():
+    """
+    FastAPI dependency to provide Redis client for request scope.
+    
+    This ensures a single Redis connection is shared across all operations
+    within a single request, reducing connection overhead.
+    """
+    return await get_redis()
+
 async def close_redis():
     """Close Redis connections."""
     global redis_pool, redis_client
