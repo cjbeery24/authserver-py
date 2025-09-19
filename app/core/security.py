@@ -66,17 +66,11 @@ class TokenManager:
             if payload.get("type") != token_type:
                 return None
 
-            # Check if token is blacklisted (if redis client is provided)
+            # Check if token is blacklisted by JTI (if redis client is provided)
             if redis_client:
-                # Check both full token and JTI blacklists
                 if await TokenBlacklist.is_token_blacklisted(token, redis_client):
-                    logger.warning(f"Attempt to use blacklisted token")
-                    return None
-                
-                # Also check JTI-based blacklist (for logout-all functionality)
-                jti = payload.get("jti")
-                if jti and await TokenBlacklist.is_token_blacklisted_by_jti(jti, redis_client):
-                    logger.warning(f"Attempt to use token with blacklisted JTI: {jti}")
+                    jti = payload.get("jti", "unknown")
+                    logger.warning(f"Attempt to use blacklisted token with JTI: {jti}")
                     return None
 
             return payload
@@ -89,7 +83,7 @@ class TokenManager:
         """Decode a JWT token without verification (for introspection)."""
         try:
             # Decode without verification for token introspection
-            payload = jwt.decode(token, options={"verify_signature": False, "verify_exp": False})
+            payload = jwt.decode(token, key="", options={"verify_signature": False, "verify_exp": False})
             return payload
         except JWTError:
             return None
@@ -673,39 +667,48 @@ class SecureTokenHasher:
 
 
 class TokenBlacklist:
-    """Token blacklist for secure logout and token invalidation."""
+    """Token blacklist for secure logout and token invalidation using JTI-only storage."""
 
     @staticmethod
-    def get_blacklist_key(token: str) -> str:
-        """Generate Redis key for token blacklist."""
-        return f"token_blacklist:{token}"
+    def get_blacklist_key(jti: str) -> str:
+        """Generate Redis key for JTI blacklist."""
+        return f"token_blacklist_jti:{jti}"
 
     @staticmethod
     async def blacklist_token(token: str, redis_client, expiry_seconds: int = None) -> bool:
         """
-        Add token to blacklist with expiration.
+        Add token to blacklist by JTI with expiration.
 
         Args:
-            token: The token to blacklist
+            token: The token to blacklist (JTI will be extracted)
             redis_client: Redis client instance
             expiry_seconds: Custom expiry time, defaults to token's remaining TTL
 
         Returns:
             bool: True if successfully blacklisted
         """
-        key = TokenBlacklist.get_blacklist_key(token)
+        # Extract JTI from token
+        payload = TokenManager.decode_token(token)
+        if not payload or not payload.get("jti"):
+            logger.warning("Cannot blacklist token: no JTI found")
+            return False
+
+        jti = payload["jti"]
+        key = TokenBlacklist.get_blacklist_key(jti)
 
         if expiry_seconds is None:
             # Get token's remaining TTL from the token itself
-            payload = TokenManager.decode_token(token)
-            if payload and payload.get("exp"):
-                from datetime import datetime
+            if payload.get("exp"):
                 expiry_seconds = int(payload["exp"] - datetime.now(timezone.utc).timestamp())
                 # Ensure minimum of 1 second and maximum of 30 days
                 expiry_seconds = max(1, min(expiry_seconds, 30 * 24 * 60 * 60))
+            else:
+                # Fallback to default expiry if no exp claim
+                expiry_seconds = 24 * 60 * 60  # 24 hours
 
-        if expiry_seconds:
+        if expiry_seconds > 0:
             await redis_client.setex(key, expiry_seconds, "blacklisted")
+            logger.debug(f"Blacklisted token JTI: {jti} for {expiry_seconds} seconds")
             return True
 
         return False
@@ -713,18 +716,45 @@ class TokenBlacklist:
     @staticmethod
     async def is_token_blacklisted(token: str, redis_client) -> bool:
         """
-        Check if token is blacklisted.
+        Check if token is blacklisted by JTI.
 
         Args:
-            token: Token to check
+            token: Token to check (JTI will be extracted)
             redis_client: Redis client instance
 
         Returns:
             bool: True if token is blacklisted
         """
-        key = TokenBlacklist.get_blacklist_key(token)
-        result = await redis_client.get(key)
-        return result is not None
+        # Extract JTI from token
+        payload = TokenManager.decode_token(token)
+        if not payload or not payload.get("jti"):
+            return False
+
+        jti = payload["jti"]
+        return await TokenBlacklist.is_token_blacklisted_by_jti(jti, redis_client)
+
+    @staticmethod
+    async def blacklist_token_by_jti(jti: str, redis_client, expiry_seconds: int) -> bool:
+        """
+        Blacklist a token by its JTI directly.
+
+        Args:
+            jti: The JWT ID to blacklist
+            redis_client: Redis client instance
+            expiry_seconds: Expiry time in seconds
+
+        Returns:
+            bool: True if successfully blacklisted
+        """
+        if not jti:
+            return False
+
+        key = TokenBlacklist.get_blacklist_key(jti)
+        if expiry_seconds > 0:
+            await redis_client.setex(key, expiry_seconds, "blacklisted")
+            logger.debug(f"Blacklisted JTI: {jti} for {expiry_seconds} seconds")
+            return True
+        return False
 
     @staticmethod
     async def blacklist_all_user_tokens(user_id: int, redis_client, db_session) -> int:
@@ -753,15 +783,17 @@ class TokenBlacklist:
 
         blacklisted_count = 0
         for token_record in active_tokens:
-            # Generate the actual token string from stored data
-            # Since we store JTI, we need to blacklist by JTI
-            jti_key = f"token_blacklist_jti:{token_record.token_jti}"
-            
             # Calculate remaining TTL for this token
             remaining_seconds = int((token_record.expires_at - datetime.now(timezone.utc)).total_seconds())
             if remaining_seconds > 0:
-                await redis_client.setex(jti_key, remaining_seconds, "blacklisted")
-                blacklisted_count += 1
+                # Use the new blacklist_token_by_jti method for consistency
+                success = await TokenBlacklist.blacklist_token_by_jti(
+                    token_record.token_jti, 
+                    redis_client, 
+                    remaining_seconds
+                )
+                if success:
+                    blacklisted_count += 1
 
         logger.info(f"Blacklisted {blacklisted_count} tokens for user {user_id}")
         return blacklisted_count
