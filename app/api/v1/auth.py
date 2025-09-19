@@ -200,8 +200,25 @@ async def _authenticate_user(
     return user, False  # Authentication successful, no MFA required
 
 
-def _create_token_response(user: User, db: Session, ip_address: str = None, user_agent: str = None) -> TokenResponse:
-    """Create token response for authenticated user and store tokens in database."""
+async def _create_token_response(
+    user: User, 
+    db: Session, 
+    ip_address: str = None, 
+    user_agent: str = None,
+    old_refresh_token: str = None,
+    redis_client = None
+) -> TokenResponse:
+    """
+    Create token response for authenticated user and store tokens in database.
+    
+    Args:
+        user: User object
+        db: Database session
+        ip_address: Client IP address
+        user_agent: User agent string
+        old_refresh_token: Previous refresh token to blacklist (for token rotation)
+        redis_client: Redis client for token blacklisting
+    """
     token_data = {
         "sub": str(user.id),
         "username": user.username,
@@ -210,7 +227,24 @@ def _create_token_response(user: User, db: Session, ip_address: str = None, user
 
     tokens = TokenManager.create_token_pair(token_data)
 
-    # Store tokens in database for tracking
+    # Blacklist old refresh token if provided (token rotation security)
+    if old_refresh_token and redis_client:
+        blacklist_success = await TokenBlacklist.blacklist_token(old_refresh_token, redis_client)
+        if blacklist_success:
+            logger.info(f"Blacklisted old refresh token for user {user.id} during token rotation")
+            
+            # Also mark as revoked in database for audit purposes
+            await _revoke_token_in_db(
+                token=old_refresh_token,
+                db=db,
+                reason="token_rotation",
+                ip_address=ip_address,
+                user_agent=user_agent
+            )
+        else:
+            logger.warning(f"Failed to blacklist old refresh token for user {user.id}")
+
+    # Store new tokens in database for tracking
     TokenManager.store_user_tokens(
         db_session=db,
         user_id=user.id,
@@ -375,11 +409,12 @@ async def login_for_access_token(
         )
 
     # No MFA required, return tokens
-    return _create_token_response(
+    return await _create_token_response(
         user=user,
         db=db,
         ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get('User-Agent')
+        user_agent=request.headers.get('User-Agent'),
+        redis_client=redis_client
     )
 
 
@@ -426,11 +461,12 @@ async def verify_mfa_token(
         )
 
     # Authentication successful, return tokens
-    return _create_token_response(
+    return await _create_token_response(
         user=user,
         db=db,
         ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get('User-Agent')
+        user_agent=request.headers.get('User-Agent'),
+        redis_client=redis_client
     )
 
 
@@ -489,39 +525,23 @@ async def refresh_access_token(
             detail="User not found or deactivated"
         )
 
-    # Create new token pair
-    token_data = {
-        "sub": str(user.id),
-        "username": user.username,
-        "email": user.email
-    }
-
-    tokens = TokenManager.create_token_pair(token_data)
-
-    # Store new tokens in database
-    TokenManager.store_user_tokens(
-        db_session=db,
-        user_id=user.id,
-        access_token=tokens["access_token"],
-        refresh_token=tokens["refresh_token"],
+    # Create new token pair with token rotation (blacklist old refresh token)
+    token_response = await _create_token_response(
+        user=user,
+        db=db,
         ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get('User-Agent')
+        user_agent=request.headers.get('User-Agent'),
+        old_refresh_token=refresh_token,  # Blacklist the used refresh token
+        redis_client=redis_client
     )
 
     # Reset failed refresh attempts on successful refresh
     if settings.auth_rate_limit_enabled:
         await FailedRefreshTracker.reset_failed_attempts(client_ip, redis_client)
 
-    logger.info(f"Token refresh successful for user {user_id} from IP: {client_ip}")
+    logger.info(f"Token refresh successful for user {user_id} from IP: {client_ip} (old token blacklisted)")
 
-    return TokenResponse(
-        access_token=tokens["access_token"],
-        refresh_token=tokens["refresh_token"],
-        token_type=tokens["token_type"],
-        expires_in=tokens["expires_in"],
-        user_id=user.id,
-        username=user.username
-    )
+    return token_response
 
 
 @router.get("/me", response_model=UserResponse)
