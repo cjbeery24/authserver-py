@@ -2,7 +2,7 @@
 Audit Log model for tracking security events and user actions.
 """
 
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Index, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -13,7 +13,7 @@ class AuditLog(BaseModel):
 
     __tablename__ = "audit_logs"
 
-    user_id = Column(Integer, nullable=True, index=True)  # Nullable for system events
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # Nullable for system events
     action = Column(String(100), nullable=False, index=True)  # login, logout, password_change, etc.
     resource = Column(String(255), nullable=True, index=True)  # user, role, permission, etc.
     resource_id = Column(String(255), nullable=True)  # ID of the affected resource

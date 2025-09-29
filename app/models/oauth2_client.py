@@ -2,10 +2,12 @@
 OAuth 2.0 Client model for OpenID Connect applications.
 """
 
-from sqlalchemy import Column, String, Text, Boolean
+from sqlalchemy import Column, String, Text, Boolean, DateTime
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.core.security import ClientSecretHasher
+from sqlalchemy import event
 
 
 class OAuth2Client(BaseModel):
@@ -14,11 +16,12 @@ class OAuth2Client(BaseModel):
     __tablename__ = "oauth2_clients"
 
     client_id = Column(String(255), unique=True, nullable=False, index=True)
-    client_secret = Column(String(255), nullable=False)
+    client_secret = Column(String(255), nullable=False)  # Hashed client secret
     name = Column(String(255), nullable=False)
     redirect_uris = Column(Text, nullable=False)  # JSON string of redirect URIs
     scopes = Column(Text, nullable=False)  # JSON string of allowed scopes
     is_active = Column(Boolean, default=True, nullable=False)
+    secret_last_rotated = Column(DateTime, nullable=True)  # Track when secret was last rotated
 
     # Relationship to tokens (optional - can be added later if needed)
     # tokens = relationship("OAuth2Token", back_populates="client")
@@ -56,3 +59,69 @@ class OAuth2Client(BaseModel):
         """Set scopes as JSON string."""
         import json
         self.scopes = json.dumps(scope_list) if scope_list else "[]"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Store plain secret temporarily if provided (for registration response)
+        self._plain_secret = kwargs.get('client_secret')
+        # Set initial rotation time
+        if 'secret_last_rotated' not in kwargs and hasattr(self, 'created_at'):
+            from datetime import datetime, timezone
+            self.secret_last_rotated = datetime.now(timezone.utc)
+
+    def set_client_secret(self, plain_secret: str):
+        """Set and hash a new client secret."""
+        from datetime import datetime, timezone
+        self.client_secret = ClientSecretHasher.hash_secret(plain_secret)
+        self.secret_last_rotated = datetime.now(timezone.utc)
+
+    def verify_client_secret(self, plain_secret: str) -> bool:
+        """Verify a plain client secret against the hashed secret."""
+        try:
+            return ClientSecretHasher.verify_secret(plain_secret, self.client_secret)
+        except Exception:
+            return False
+
+    def rotate_client_secret(self) -> str:
+        """Generate and set a new client secret. Returns the plain secret."""
+        import secrets
+        import string
+
+        # Generate a new secure secret
+        new_secret = secrets.token_urlsafe(64)
+
+        # Hash and store it
+        self.set_client_secret(new_secret)
+
+        return new_secret
+
+    @property
+    def plain_secret(self) -> str:
+        """Get the plain client secret (only available temporarily after creation)."""
+        return getattr(self, '_plain_secret', None)
+
+    def generate_registration_token(self):
+        """Generate a secure registration access token."""
+        import secrets
+        import string
+        from app.models.oauth2_client_token import OAuth2ClientToken
+
+        # Generate a secure token
+        token_value = secrets.token_urlsafe(64)
+
+        # Create token record in database
+        token_record = OAuth2ClientToken(
+            client_id=self.id,
+            token=token_value,
+            token_type="registration"
+        )
+
+        return token_record
+
+
+# Event listener to hash client secret before insert
+@event.listens_for(OAuth2Client, 'before_insert')
+def hash_client_secret_before_insert(mapper, connection, target):
+    """Hash the client secret before inserting into database."""
+    if hasattr(target, '_plain_secret') and target._plain_secret:
+        target.set_client_secret(target._plain_secret)

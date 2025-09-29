@@ -1,13 +1,17 @@
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import pyotp
 import logging
 import hashlib
 import base64
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.backends import default_backend
+import json
 
 from app.core.config import settings
 
@@ -17,8 +21,202 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+class RSAKeyManager:
+    """RSA key management for JWT signing and JWKS generation."""
+    
+    @staticmethod
+    def generate_rsa_key_pair(key_size: int = 2048) -> Tuple[str, str]:
+        """
+        Generate RSA private/public key pair.
+        
+        Args:
+            key_size: RSA key size in bits (default: 2048)
+            
+        Returns:
+            Tuple of (private_key_pem, public_key_pem)
+        """
+        # Generate private key
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=key_size,
+            backend=default_backend()
+        )
+        
+        # Serialize private key to PEM format
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode('utf-8')
+        
+        # Get public key and serialize to PEM format
+        public_key = private_key.public_key()
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode('utf-8')
+        
+        return private_pem, public_pem
+    
+    @staticmethod
+    def get_signing_key() -> str:
+        """
+        Get the appropriate signing key based on algorithm.
+        
+        Returns:
+            Signing key (private key for RS256, secret for HS256)
+        """
+        if settings.jwt_algorithm.startswith('RS'):
+            if not settings.jwt_private_key:
+                raise ValueError("JWT_PRIVATE_KEY environment variable is required for RS256 algorithm")
+            return settings.jwt_private_key
+        else:
+            # Fall back to HMAC for backward compatibility
+            return settings.jwt_secret_key
+    
+    @staticmethod
+    def get_verification_key() -> str:
+        """
+        Get the appropriate verification key based on algorithm.
+        
+        Returns:
+            Verification key (public key for RS256, secret for HS256)
+        """
+        if settings.jwt_algorithm.startswith('RS'):
+            if not settings.jwt_public_key:
+                raise ValueError("JWT_PUBLIC_KEY environment variable is required for RS256 algorithm")
+            return settings.jwt_public_key
+        else:
+            # Fall back to HMAC for backward compatibility
+            return settings.jwt_secret_key
+    
+    @staticmethod
+    def public_key_to_jwk(public_key_pem: str, key_id: str) -> Dict[str, Any]:
+        """
+        Convert RSA public key PEM to JWK (JSON Web Key) format.
+        
+        Args:
+            public_key_pem: Public key in PEM format
+            key_id: Key identifier
+            
+        Returns:
+            JWK dictionary
+        """
+        # Load public key from PEM
+        public_key = serialization.load_pem_public_key(
+            public_key_pem.encode('utf-8'),
+            backend=default_backend()
+        )
+        
+        # Extract RSA public key numbers
+        public_numbers = public_key.public_numbers()
+        
+        # Convert to base64url format
+        def int_to_base64url(value: int) -> str:
+            # Convert integer to bytes
+            byte_length = (value.bit_length() + 7) // 8
+            value_bytes = value.to_bytes(byte_length, 'big')
+            # Base64url encode
+            return base64.urlsafe_b64encode(value_bytes).decode('utf-8').rstrip('=')
+        
+        return {
+            "kty": "RSA",           # Key type
+            "use": "sig",           # Key use (signature)
+            "alg": "RS256",         # Algorithm
+            "kid": key_id,          # Key ID
+            "n": int_to_base64url(public_numbers.n),  # Modulus
+            "e": int_to_base64url(public_numbers.e)   # Exponent
+        }
+    
+    @staticmethod
+    def get_jwks() -> Dict[str, Any]:
+        """
+        Generate JWKS (JSON Web Key Set) for the current public key.
+        
+        Returns:
+            JWKS dictionary
+        """
+        if not settings.jwt_public_key:
+            raise ValueError("JWT_PUBLIC_KEY environment variable is required for JWKS generation")
+        
+        jwk = RSAKeyManager.public_key_to_jwk(settings.jwt_public_key, settings.jwt_key_id)
+        
+        return {
+            "keys": [jwk]
+        }
+
+
 class TokenManager:
     """Utilities for JWT token creation and verification."""
+
+    @staticmethod
+    def create_id_token(user_data: dict, client_id: str, nonce: str = None, expires_delta: Optional[timedelta] = None, auth_time: Optional[datetime] = None) -> str:
+        """
+        Create an OpenID Connect ID token.
+        
+        Args:
+            user_data: Dictionary containing user information (sub, email, etc.)
+            client_id: OAuth2 client ID (audience)
+            nonce: Optional nonce value from authorization request
+            expires_delta: Custom expiration time
+            auth_time: Time when user authentication occurred
+            
+        Returns:
+            Signed JWT ID token
+        """
+        now = datetime.now(timezone.utc)
+        
+        if expires_delta:
+            expire = now + expires_delta
+        else:
+            expire = now + timedelta(minutes=settings.jwt_access_token_expire_minutes)
+        
+        # Standard OpenID Connect claims
+        to_encode = {
+            "iss": settings.oidc_issuer_url,  # Issuer
+            "sub": str(user_data.get("sub", user_data.get("user_id"))),  # Subject (user ID)
+            "aud": client_id,  # Audience (client ID)
+            "exp": expire,  # Expiration time
+            "iat": now,  # Issued at
+            "type": "id_token"  # Token type for our internal use
+        }
+        
+        # Add nonce if provided (CSRF protection)
+        if nonce:
+            to_encode["nonce"] = nonce
+            
+        # Add auth_time if provided
+        if auth_time:
+            to_encode["auth_time"] = int(auth_time.timestamp())
+        else:
+            to_encode["auth_time"] = int(now.timestamp())
+            
+        # Add optional user claims based on available user data and scopes
+        if "email" in user_data and user_data["email"]:
+            to_encode["email"] = user_data["email"]
+            to_encode["email_verified"] = user_data.get("email_verified", True)
+            
+        if "name" in user_data and user_data["name"]:
+            to_encode["name"] = user_data["name"]
+            
+        if "username" in user_data and user_data["username"]:
+            to_encode["preferred_username"] = user_data["username"]
+            
+        if "given_name" in user_data and user_data["given_name"]:
+            to_encode["given_name"] = user_data["given_name"]
+            
+        if "family_name" in user_data and user_data["family_name"]:
+            to_encode["family_name"] = user_data["family_name"]
+            
+        # Add Key ID to header for JWKS support
+        headers = {}
+        if settings.jwt_algorithm.startswith('RS'):
+            headers["kid"] = settings.jwt_key_id
+        
+        # Generate JWT ID token using appropriate key
+        signing_key = RSAKeyManager.get_signing_key()
+        encoded_jwt = jwt.encode(to_encode, signing_key, algorithm=settings.jwt_algorithm, headers=headers)
+        return encoded_jwt
 
     @staticmethod
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True) -> str:
@@ -36,7 +234,14 @@ class TokenManager:
             jti = secrets.token_hex(16)  # Generate unique JTI
             to_encode.update({"jti": jti})
 
-        encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+        # Add Key ID to header for JWKS support
+        headers = {}
+        if settings.jwt_algorithm.startswith('RS'):
+            headers["kid"] = settings.jwt_key_id
+
+        # Use appropriate signing key
+        signing_key = RSAKeyManager.get_signing_key()
+        encoded_jwt = jwt.encode(to_encode, signing_key, algorithm=settings.jwt_algorithm, headers=headers)
         return encoded_jwt
 
     @staticmethod
@@ -55,14 +260,74 @@ class TokenManager:
             jti = secrets.token_hex(16)  # Generate unique JTI
             to_encode.update({"jti": jti})
 
-        encoded_jwt = jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+        # Add Key ID to header for JWKS support
+        headers = {}
+        if settings.jwt_algorithm.startswith('RS'):
+            headers["kid"] = settings.jwt_key_id
+
+        # Use appropriate signing key
+        signing_key = RSAKeyManager.get_signing_key()
+        encoded_jwt = jwt.encode(to_encode, signing_key, algorithm=settings.jwt_algorithm, headers=headers)
         return encoded_jwt
+
+    @staticmethod
+    async def verify_id_token(token: str, client_id: str = None, nonce: str = None, redis_client = None) -> Optional[dict]:
+        """
+        Verify and decode an OpenID Connect ID token.
+        
+        Args:
+            token: JWT ID token to verify
+            client_id: Expected client ID (audience)
+            nonce: Expected nonce value
+            redis_client: Redis client for blacklist checking
+            
+        Returns:
+            Decoded token payload if valid, None otherwise
+        """
+        try:
+            # Use appropriate verification key
+            verification_key = RSAKeyManager.get_verification_key()
+            payload = jwt.decode(token, verification_key, algorithms=[settings.jwt_algorithm])
+            
+            # Verify token type
+            if payload.get("type") != "id_token":
+                logger.warning("Token verification failed: not an ID token")
+                return None
+                
+            # Verify issuer
+            if payload.get("iss") != settings.oidc_issuer_url:
+                logger.warning(f"ID token verification failed: invalid issuer {payload.get('iss')}")
+                return None
+                
+            # Verify audience (client_id) if provided
+            if client_id and payload.get("aud") != client_id:
+                logger.warning(f"ID token verification failed: invalid audience {payload.get('aud')}, expected {client_id}")
+                return None
+                
+            # Verify nonce if provided
+            if nonce and payload.get("nonce") != nonce:
+                logger.warning("ID token verification failed: nonce mismatch")
+                return None
+                
+            # Check if token is blacklisted (if redis client is provided)
+            if redis_client:
+                if await TokenBlacklist.is_token_blacklisted(token, redis_client):
+                    jti = payload.get("jti", "unknown")
+                    logger.warning(f"Attempt to use blacklisted ID token with JTI: {jti}")
+                    return None
+
+            return payload
+        except JWTError as e:
+            logger.warning(f"ID token verification failed: {e}")
+            return None
 
     @staticmethod
     async def verify_token(token: str, token_type: str = "access", redis_client = None) -> Optional[dict]:
         """Verify and decode a JWT token."""
         try:
-            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+            # Use appropriate verification key
+            verification_key = RSAKeyManager.get_verification_key()
+            payload = jwt.decode(token, verification_key, algorithms=[settings.jwt_algorithm])
             if payload.get("type") != token_type:
                 return None
 
@@ -92,7 +357,9 @@ class TokenManager:
     def is_token_expired(token: str) -> bool:
         """Check if a JWT token is expired."""
         try:
-            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+            # Use appropriate verification key
+            verification_key = RSAKeyManager.get_verification_key()
+            payload = jwt.decode(token, verification_key, algorithms=[settings.jwt_algorithm])
             exp = payload.get("exp")
             if not exp:
                 return False
@@ -135,6 +402,45 @@ class TokenManager:
             "token_type": "bearer",
             "expires_in": settings.jwt_access_token_expire_minutes * 60,  # seconds
         }
+
+    @staticmethod
+    def create_oauth2_token_response(user_data: dict, client_id: str, scopes: List[str], nonce: str = None, auth_time: Optional[datetime] = None) -> dict:
+        """
+        Create OAuth2/OIDC token response with ID token when openid scope is present.
+        
+        Args:
+            user_data: Dictionary containing user information
+            client_id: OAuth2 client ID
+            scopes: List of granted scopes
+            nonce: Optional nonce from authorization request
+            auth_time: Time when user authentication occurred
+            
+        Returns:
+            Token response dictionary
+        """
+        # Create standard access and refresh tokens
+        access_token = TokenManager.create_access_token(user_data)
+        refresh_token = TokenManager.create_refresh_token(user_data)
+        
+        response = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "expires_in": settings.jwt_access_token_expire_minutes * 60,  # seconds
+            "scope": " ".join(scopes) if scopes else ""
+        }
+        
+        # Add ID token if openid scope is present
+        if "openid" in scopes:
+            id_token = TokenManager.create_id_token(
+                user_data=user_data,
+                client_id=client_id,
+                nonce=nonce,
+                auth_time=auth_time
+            )
+            response["id_token"] = id_token
+            
+        return response
 
     @staticmethod
     def get_token_metadata(token: str) -> Optional[dict]:
@@ -297,6 +603,22 @@ class PasswordHasher:
 
     @staticmethod
     def needs_rehash(hashed_password: str) -> bool:
+        """Check if password hash needs to be updated."""
+        return pwd_context.needs_update(hashed_password)
+
+
+class ClientSecretHasher:
+    """Client secret hashing utilities using bcrypt (no strength validation)."""
+
+    @staticmethod
+    def hash_secret(secret: str) -> str:
+        """Hash a client secret without validation."""
+        return pwd_context.hash(secret)
+
+    @staticmethod
+    def verify_secret(plain_secret: str, hashed_secret: str) -> bool:
+        """Verify a client secret against its hash."""
+        return pwd_context.verify(plain_secret, hashed_secret)
         """Check if password hash needs to be updated."""
         return pwd_context.needs_update(hashed_password)
 

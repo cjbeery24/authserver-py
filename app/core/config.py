@@ -45,8 +45,11 @@ class Settings(BaseSettings):
     redis_ssl: bool = Field(default=False, env="REDIS_SSL")
     
     # Security & Authentication
-    jwt_secret_key: str = Field(env="JWT_SECRET_KEY")
-    jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
+    jwt_secret_key: str = Field(env="JWT_SECRET_KEY")  # Kept for backward compatibility
+    jwt_private_key: Optional[str] = Field(default=None, env="JWT_PRIVATE_KEY")  # RSA private key in PEM format
+    jwt_public_key: Optional[str] = Field(default=None, env="JWT_PUBLIC_KEY")    # RSA public key in PEM format
+    jwt_algorithm: str = Field(default="RS256", env="JWT_ALGORITHM")  # Changed default to RS256
+    jwt_key_id: str = Field(default="auth-server-key-1", env="JWT_KEY_ID")  # Key ID for JWKS
     jwt_access_token_expire_minutes: int = Field(default=30, env="JWT_ACCESS_TOKEN_EXPIRE_MINUTES")
     jwt_refresh_token_expire_days: int = Field(default=7, env="JWT_REFRESH_TOKEN_EXPIRE_DAYS")
     
@@ -106,6 +109,15 @@ class Settings(BaseSettings):
     pkce_required: bool = Field(default=True, env="PKCE_REQUIRED")
     pkce_code_verifier_min_length: int = Field(default=43, env="PKCE_CODE_VERIFIER_MIN_LENGTH")
     pkce_code_verifier_max_length: int = Field(default=128, env="PKCE_CODE_VERIFIER_MAX_LENGTH")
+    
+    # OAuth 2.0 Token Settings
+    oauth2_access_token_expire_minutes: int = Field(default=30, env="OAUTH2_ACCESS_TOKEN_EXPIRE_MINUTES")
+    oauth2_refresh_token_expire_days: int = Field(default=7, env="OAUTH2_REFRESH_TOKEN_EXPIRE_DAYS")
+    oauth2_authorization_code_expire_minutes: int = Field(default=10, env="OAUTH2_AUTHORIZATION_CODE_EXPIRE_MINUTES")
+    
+    # OAuth 2.0 Scopes
+    oauth2_default_scopes: List[str] = Field(default=["openid", "profile", "email"], env="OAUTH2_DEFAULT_SCOPES")
+    oauth2_supported_scopes: List[str] = Field(default=["openid", "profile", "email", "offline_access"], env="OAUTH2_SUPPORTED_SCOPES")
     
     # Rate Limiting
     rate_limit_enabled: bool = Field(default=True, env="RATE_LIMIT_ENABLED")

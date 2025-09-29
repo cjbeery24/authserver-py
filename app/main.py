@@ -11,6 +11,8 @@ from fastapi_limiter.depends import RateLimiter
 from contextlib import asynccontextmanager
 import time
 import logging
+import asyncio
+from datetime import datetime, timezone, timedelta
 
 # Import custom middleware
 from app.middleware import AuthMiddleware, OptionalAuthMiddleware
@@ -35,10 +37,52 @@ async def lifespan(app: FastAPI):
         await FastAPILimiter.init(redis_client)
         logger.info("Rate limiter initialized with Redis backend")
 
+    # Start background token cleanup task
+    cleanup_task = asyncio.create_task(schedule_token_cleanup())
+    logger.info("Started background token cleanup task")
+
     yield
 
     # Shutdown (cleanup if needed)
-    pass
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Token cleanup task stopped")
+
+
+async def schedule_token_cleanup():
+    """
+    Background task to periodically clean up expired OAuth2 tokens.
+
+    Runs every 24 hours.
+    """
+    from app.core.database import get_db_session
+    from app.core.oauth import create_authorization_server
+
+    while True:
+        try:
+            # Wait 24 hours between cleanups
+            await asyncio.sleep(24 * 60 * 60)  # 24 hours in seconds
+
+            logger.info("Running scheduled OAuth2 token cleanup...")
+
+            # Create database session and clean up tokens
+            db = next(get_db_session())
+            try:
+                server = create_authorization_server(db)
+                cleaned_count = server.validator.cleanup_expired_tokens(days_old=30)
+                if cleaned_count > 0:
+                    logger.info(f"Scheduled cleanup: removed {cleaned_count} expired tokens")
+                else:
+                    logger.debug("Scheduled cleanup: no expired tokens to remove")
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"Error in scheduled token cleanup: {e}")
+            # Continue running despite errors
 
 # Create FastAPI application
 app = FastAPI(
@@ -119,16 +163,15 @@ async def root():
 # Include API routers
 from app.api.v1.health import router as health_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.oauth import router as oauth_router
 
 app.include_router(health_router, prefix="/api/v1", tags=["health"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
+app.include_router(oauth_router, prefix="/oauth", tags=["oauth"])
 
 # TODO: Add more routers as we implement them
 # from app.api.v1.users import router as users_router
-# from app.api.v1.oauth import router as oauth_router
-
 # app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
-# app.include_router(oauth_router, prefix="/api/v1/oauth", tags=["oauth"])
 
 if __name__ == "__main__":
     import uvicorn

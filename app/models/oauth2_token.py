@@ -2,7 +2,7 @@
 OAuth 2.0 Token model for storing access and refresh tokens.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Index
 from sqlalchemy.orm import relationship
 
@@ -31,8 +31,8 @@ class OAuth2Token(BaseModel):
     )
 
     # Relationships
-    client = relationship("OAuth2Client", backref="tokens")
-    user = relationship("User", backref="tokens")
+    client = relationship("OAuth2Client", backref="oauth_tokens")
+    user = relationship("User", backref="oauth_tokens")
 
     def __repr__(self):
         return f"<OAuth2Token(id={self.id}, client_id={self.client_id}, token_type='{self.token_type}')>"
@@ -40,7 +40,7 @@ class OAuth2Token(BaseModel):
     @property
     def is_expired(self):
         """Check if token is expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
     @property
     def is_access_token(self):
@@ -51,6 +51,11 @@ class OAuth2Token(BaseModel):
     def is_refresh_token(self):
         """Check if this is a refresh token."""
         return self.token_type == "refresh"
+
+    @property
+    def is_client_credentials_token(self):
+        """Check if this token was issued for client credentials flow (no user)."""
+        return self.user_id is None
 
     def get_scopes(self):
         """Get list of scopes from JSON string."""
@@ -70,7 +75,8 @@ class OAuth2Token(BaseModel):
         """Create an access token record."""
         if expires_at is None:
             from datetime import timedelta
-            expires_at = datetime.utcnow() + timedelta(minutes=30)  # Default 30 minutes
+            from app.core.config import settings
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.oauth2_access_token_expire_minutes)
 
         token = cls(
             client_id=client_id,
@@ -87,7 +93,8 @@ class OAuth2Token(BaseModel):
         """Create a refresh token record."""
         if expires_at is None:
             from datetime import timedelta
-            expires_at = datetime.utcnow() + timedelta(days=7)  # Default 7 days
+            from app.core.config import settings
+            expires_at = datetime.now(timezone.utc) + timedelta(days=settings.oauth2_refresh_token_expire_days)
 
         token = cls(
             client_id=client_id,

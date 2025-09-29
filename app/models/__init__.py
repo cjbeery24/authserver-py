@@ -10,6 +10,8 @@ from app.models.user_role import UserRole
 from app.models.role_permission import RolePermission
 from app.models.oauth2_client import OAuth2Client
 from app.models.oauth2_token import OAuth2Token
+from app.models.oauth2_authorization_code import OAuth2AuthorizationCode
+from app.models.oauth2_client_token import OAuth2ClientToken
 from app.models.mfa_secret import MFASecret
 from app.models.audit_log import AuditLog
 from app.models.password_reset import PasswordResetToken
@@ -17,5 +19,6 @@ from app.models.user_token import UserToken
 
 __all__ = [
     "Base", "User", "Role", "Permission", "UserRole", "RolePermission",
-    "OAuth2Client", "OAuth2Token", "MFASecret", "AuditLog", "PasswordResetToken", "UserToken"
+    "OAuth2Client", "OAuth2Token", "OAuth2AuthorizationCode", "OAuth2ClientToken", "MFASecret",
+    "AuditLog", "PasswordResetToken", "UserToken"
 ]

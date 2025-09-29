@@ -29,6 +29,8 @@ from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.models.password_reset import PasswordResetToken
 from app.models.user_token import UserToken
+from app.models.oauth2_authorization_code import OAuth2AuthorizationCode
+from app.models.oauth2_client_token import OAuth2ClientToken
 from app.core.config import settings
 from sqlalchemy import and_
 from app.core.email import email_service
@@ -842,15 +844,29 @@ async def cleanup_expired_tokens(
         # Also cleanup expired password reset tokens
         password_reset_cleaned = PasswordResetToken.cleanup_expired_tokens(db_session=db)
 
+        # Also cleanup expired OAuth2 authorization codes
+        auth_codes_cleaned = OAuth2AuthorizationCode.cleanup_expired_codes(db_session=db)
+
+        # Also cleanup expired OAuth2 client tokens
+        client_tokens_cleaned = OAuth2ClientToken.cleanup_expired_tokens(db_session=db)
+
+        # Also cleanup expired OAuth2 tokens (access and refresh tokens)
+        from app.core.oauth import create_authorization_server
+        server = create_authorization_server(db)
+        oauth2_tokens_cleaned = server.validator.cleanup_expired_tokens(days_old=30)
+
         db.commit()
 
-        logger.info(f"Token cleanup completed: {tokens_cleaned} user tokens, {password_reset_cleaned} password reset tokens")
+        logger.info(f"Token cleanup completed: {tokens_cleaned} user tokens, {password_reset_cleaned} password reset tokens, {auth_codes_cleaned} authorization codes, {client_tokens_cleaned} client tokens, {oauth2_tokens_cleaned} OAuth2 tokens")
 
         return {
             "message": "Token cleanup completed successfully",
             "user_tokens_cleaned": tokens_cleaned,
             "password_reset_tokens_cleaned": password_reset_cleaned,
-            "total_cleaned": tokens_cleaned + password_reset_cleaned
+            "authorization_codes_cleaned": auth_codes_cleaned,
+            "client_tokens_cleaned": client_tokens_cleaned,
+            "oauth2_tokens_cleaned": oauth2_tokens_cleaned,
+            "total_cleaned": tokens_cleaned + password_reset_cleaned + auth_codes_cleaned + client_tokens_cleaned + oauth2_tokens_cleaned
         }
 
     except Exception as e:
