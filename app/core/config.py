@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     
     # Token Security
     security_salt: str = Field(default="default_salt_change_in_production", env="SECURITY_SALT")
+    encrypt_tokens_in_db: bool = Field(default=True, env="ENCRYPT_TOKENS_IN_DB")
+    token_encryption_key: Optional[str] = Field(default=None, env="TOKEN_ENCRYPTION_KEY")
+    
+    # Token Binding
+    token_binding_enabled: bool = Field(default=True, env="TOKEN_BINDING_ENABLED")
+    token_binding_strict_ip: bool = Field(default=False, env="TOKEN_BINDING_STRICT_IP")
+    token_binding_tolerance_seconds: int = Field(default=300, env="TOKEN_BINDING_TOLERANCE_SECONDS")
+    token_binding_skip_testing_tools: bool = Field(default=True, env="TOKEN_BINDING_SKIP_TESTING_TOOLS")
     
     # Password Security
     password_min_length: int = Field(default=8, env="PASSWORD_MIN_LENGTH")

@@ -10,8 +10,11 @@ import hashlib
 import base64
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 import json
+import os
 
 from app.core.config import settings
 
@@ -144,6 +147,304 @@ class RSAKeyManager:
         return {
             "keys": [jwk]
         }
+
+
+class TokenEncryption:
+    """
+    AES encryption utilities for securing sensitive token data in database storage.
+    
+    This class provides symmetric encryption for tokens that need to be stored
+    in the database but should remain encrypted at rest.
+    """
+    
+    @staticmethod
+    def _derive_key(password: bytes, salt: bytes) -> bytes:
+        """Derive encryption key from password and salt using PBKDF2."""
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,  # 256-bit key
+            salt=salt,
+            iterations=100000,  # OWASP recommended minimum
+            backend=default_backend()
+        )
+        return kdf.derive(password)
+    
+    @staticmethod
+    def encrypt_token(token: str, encryption_key: Optional[str] = None) -> str:
+        """
+        Encrypt a token for secure database storage.
+        
+        Args:
+            token: Plain text token to encrypt
+            encryption_key: Optional custom encryption key (uses settings if not provided)
+            
+        Returns:
+            Base64 encoded encrypted token with salt and IV
+        """
+        if not token:
+            return ""
+            
+        # Use provided key or fall back to settings
+        password = (encryption_key or settings.security_salt).encode('utf-8')
+        
+        # Generate random salt and IV
+        salt = os.urandom(16)  # 128-bit salt
+        iv = os.urandom(16)    # 128-bit IV for AES
+        
+        # Derive encryption key
+        key = TokenEncryption._derive_key(password, salt)
+        
+        # Encrypt the token
+        cipher = Cipher(
+            algorithms.AES(key),
+            modes.CBC(iv),
+            backend=default_backend()
+        )
+        encryptor = cipher.encryptor()
+        
+        # Pad token to multiple of 16 bytes (AES block size)
+        token_bytes = token.encode('utf-8')
+        padding_length = 16 - (len(token_bytes) % 16)
+        padded_token = token_bytes + bytes([padding_length] * padding_length)
+        
+        # Encrypt
+        encrypted_token = encryptor.update(padded_token) + encryptor.finalize()
+        
+        # Combine salt + iv + encrypted_token and encode as base64
+        combined = salt + iv + encrypted_token
+        return base64.b64encode(combined).decode('utf-8')
+    
+    @staticmethod
+    def decrypt_token(encrypted_token: str, encryption_key: Optional[str] = None) -> Optional[str]:
+        """
+        Decrypt a token from database storage.
+        
+        Args:
+            encrypted_token: Base64 encoded encrypted token
+            encryption_key: Optional custom encryption key (uses settings if not provided)
+            
+        Returns:
+            Decrypted plain text token or None if decryption fails
+        """
+        if not encrypted_token:
+            return None
+            
+        try:
+            # Use provided key or fall back to settings
+            password = (encryption_key or settings.security_salt).encode('utf-8')
+            
+            # Decode from base64
+            combined = base64.b64decode(encrypted_token.encode('utf-8'))
+            
+            # Extract salt, IV, and encrypted data
+            salt = combined[:16]
+            iv = combined[16:32]
+            encrypted_data = combined[32:]
+            
+            # Derive decryption key
+            key = TokenEncryption._derive_key(password, salt)
+            
+            # Decrypt
+            cipher = Cipher(
+                algorithms.AES(key),
+                modes.CBC(iv),
+                backend=default_backend()
+            )
+            decryptor = cipher.decryptor()
+            padded_token = decryptor.update(encrypted_data) + decryptor.finalize()
+            
+            # Remove padding
+            padding_length = padded_token[-1]
+            if padding_length > 16:
+                return None  # Invalid padding
+                
+            token = padded_token[:-padding_length].decode('utf-8')
+            return token
+            
+        except Exception as e:
+            logger.error(f"Token decryption failed: {str(e)}")
+            return None
+    
+    @staticmethod
+    def is_encrypted(token_data: str) -> bool:
+        """Check if token data appears to be encrypted (base64 with correct length)."""
+        if not token_data:
+            return False
+        try:
+            decoded = base64.b64decode(token_data.encode('utf-8'))
+            # Encrypted tokens should have at least salt(16) + iv(16) + some data
+            return len(decoded) >= 48
+        except Exception:
+            return False
+
+
+class TokenBinding:
+    """
+    Token binding utilities to tie tokens to specific clients/sessions.
+    
+    Implements RFC 8473-style token binding for enhanced security.
+    """
+    
+    @staticmethod
+    def create_binding_info(request, additional_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Create token binding information from request context.
+        
+        Args:
+            request: FastAPI request object
+            additional_data: Optional additional binding data
+            
+        Returns:
+            Dictionary containing binding information
+        """
+        from app.middleware.security_headers import TokenTransmissionSecurity
+        
+        binding_info = {
+            "client_fingerprint": TokenTransmissionSecurity.get_client_fingerprint(request),
+            "ip_address": request.client.host if request.client else "",
+            "user_agent_hash": hashlib.sha256(
+                request.headers.get("User-Agent", "").encode()
+            ).hexdigest()[:16],  # First 16 chars for storage efficiency
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        # Add optional additional binding data
+        if additional_data:
+            binding_info.update(additional_data)
+            
+        return binding_info
+    
+    @staticmethod
+    def create_binding_signature(binding_info: Dict[str, Any], secret_key: str) -> str:
+        """
+        Create a binding signature for the binding information.
+        
+        Args:
+            binding_info: Binding information dictionary
+            secret_key: Secret key for signing
+            
+        Returns:
+            HMAC signature of binding information
+        """
+        import hmac
+        
+        # Create canonical representation of binding info
+        canonical_data = "|".join([
+            binding_info.get("client_fingerprint", ""),
+            binding_info.get("ip_address", ""),
+            binding_info.get("user_agent_hash", ""),
+            binding_info.get("timestamp", "")
+        ])
+        
+        # Create HMAC signature
+        signature = hmac.new(
+            secret_key.encode(),
+            canonical_data.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        return signature
+    
+    @staticmethod
+    def verify_token_binding(
+        token_binding_info: Dict[str, Any], 
+        current_request, 
+        secret_key: str,
+        tolerance_seconds: int = 300  # 5 minutes tolerance
+    ) -> bool:
+        """
+        Verify token binding against current request.
+        
+        Args:
+            token_binding_info: Binding info from token
+            current_request: Current FastAPI request
+            secret_key: Secret key for verification
+            tolerance_seconds: Time tolerance for binding verification
+            
+        Returns:
+            True if binding is valid, False otherwise
+        """
+        try:
+            # Skip binding verification in development or if disabled
+            if not settings.token_binding_enabled or settings.app_env in ["development", "dev", "local"]:
+                logger.debug("Token binding verification skipped (disabled or development environment)")
+                return True
+            
+            # Skip binding for testing tools (Postman, curl, etc.) if configured
+            if settings.token_binding_skip_testing_tools:
+                user_agent = current_request.headers.get("User-Agent", "").lower()
+                testing_tools = ["postman", "insomnia", "curl", "httpie", "python-requests", "axios", "thunder client"]
+                if any(tool in user_agent for tool in testing_tools):
+                    logger.debug(f"Token binding verification skipped for testing tool: {user_agent}")
+                    return True
+            
+            # Create current binding info
+            current_binding = TokenBinding.create_binding_info(current_request)
+            
+            # Verify client fingerprint (most important)
+            if current_binding["client_fingerprint"] != token_binding_info.get("client_fingerprint"):
+                logger.warning("Token binding failed: client fingerprint mismatch")
+                return False
+            
+            # Verify IP address (with some tolerance for mobile/proxy scenarios)
+            if settings.token_binding_strict_ip:
+                if current_binding["ip_address"] != token_binding_info.get("ip_address"):
+                    logger.warning("Token binding failed: IP address mismatch")
+                    return False
+            
+            # Verify user agent hash
+            if current_binding["user_agent_hash"] != token_binding_info.get("user_agent_hash"):
+                logger.warning("Token binding failed: user agent mismatch")
+                return False
+            
+            # Verify binding signature
+            import hmac
+            expected_signature = TokenBinding.create_binding_signature(token_binding_info, secret_key)
+            if not hmac.compare_digest(expected_signature, token_binding_info.get("signature", "")):
+                logger.warning("Token binding failed: invalid signature")
+                return False
+            
+            # Verify timestamp (prevent replay attacks)
+            try:
+                binding_time = datetime.fromisoformat(token_binding_info.get("timestamp", ""))
+                current_time = datetime.now(timezone.utc)
+                time_diff = abs((current_time - binding_time).total_seconds())
+                
+                if time_diff > tolerance_seconds:
+                    logger.warning(f"Token binding failed: timestamp too old ({time_diff}s)")
+                    return False
+            except ValueError:
+                logger.warning("Token binding failed: invalid timestamp format")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Token binding verification error: {str(e)}")
+            return False
+    
+    @staticmethod
+    def add_binding_to_token_payload(payload: Dict[str, Any], binding_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add binding information to JWT token payload.
+        
+        Args:
+            payload: JWT payload dictionary
+            binding_info: Token binding information
+            
+        Returns:
+            Updated payload with binding information
+        """
+        # Add binding info in a compact format
+        payload["binding"] = {
+            "fp": binding_info.get("client_fingerprint", "")[:32],  # Truncate for size
+            "ip": binding_info.get("ip_address", ""),
+            "ua": binding_info.get("user_agent_hash", ""),
+            "ts": binding_info.get("timestamp", ""),
+            "sig": binding_info.get("signature", "")
+        }
+        
+        return payload
 
 
 class TokenManager:
@@ -708,6 +1009,233 @@ class PKCEHandler:
         sha256_hash = hashlib.sha256(code_verifier.encode('utf-8')).digest()
         code_challenge = base64.urlsafe_b64encode(sha256_hash).decode('utf-8').rstrip('=')
         return code_challenge
+
+
+class TokenRotation:
+    """
+    Token rotation and lifecycle management utilities.
+    """
+    
+    @staticmethod
+    async def rotate_refresh_token(
+        old_refresh_token: str,
+        user_id: int,
+        db_session,
+        redis_client,
+        request=None
+    ) -> Optional[Dict[str, str]]:
+        """
+        Rotate a refresh token, invalidating the old one and creating a new one.
+        
+        Args:
+            old_refresh_token: Current refresh token to rotate
+            user_id: User ID for the new token
+            db_session: Database session
+            redis_client: Redis client for blacklisting
+            request: Optional request context for binding
+            
+        Returns:
+            Dictionary with new access and refresh tokens, or None if rotation fails
+        """
+        try:
+            # Verify the old refresh token
+            payload = TokenManager.decode_token(old_refresh_token)
+            if not payload or payload.get("type") != "refresh":
+                logger.warning("Token rotation failed: invalid refresh token")
+                return None
+            
+            # Check if token is expired
+            if TokenManager.is_token_expired(old_refresh_token):
+                logger.warning("Token rotation failed: refresh token expired")
+                return None
+            
+            # Verify user ID matches
+            if int(payload.get("sub", 0)) != user_id:
+                logger.warning("Token rotation failed: user ID mismatch")
+                return None
+            
+            # Blacklist the old refresh token
+            blacklist_success = await TokenBlacklist.blacklist_token(old_refresh_token, redis_client)
+            if not blacklist_success:
+                logger.warning("Token rotation failed: could not blacklist old token")
+                return None
+            
+            # Get user data for new tokens
+            from app.models.user import User
+            user = db_session.query(User).filter(User.id == user_id).first()
+            if not user or not user.is_active:
+                logger.warning("Token rotation failed: user not found or inactive")
+                return None
+            
+            # Create new token pair
+            user_data = {
+                "sub": str(user.id),
+                "username": user.username,
+                "email": user.email
+            }
+            
+            new_tokens = TokenManager.create_token_pair(user_data)
+            
+            # Store new tokens in database
+            TokenManager.store_user_tokens(
+                db_session=db_session,
+                user_id=user.id,
+                access_token=new_tokens["access_token"],
+                refresh_token=new_tokens["refresh_token"],
+                ip_address=request.client.host if request and request.client else None,
+                user_agent=request.headers.get('User-Agent') if request else None
+            )
+            
+            logger.info(f"Successfully rotated refresh token for user {user_id}")
+            return new_tokens
+            
+        except Exception as e:
+            logger.error(f"Token rotation error: {str(e)}")
+            return None
+    
+    @staticmethod
+    async def cleanup_expired_tokens(db_session, days_old: int = 30) -> Dict[str, int]:
+        """
+        Clean up expired tokens from database.
+        
+        Args:
+            db_session: Database session
+            days_old: Remove tokens expired for this many days
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        from app.models.user_token import UserToken
+        from app.models.oauth2_token import OAuth2Token
+        from app.models.oauth2_client_token import OAuth2ClientToken
+        from app.models.oauth2_authorization_code import OAuth2AuthorizationCode
+        from app.models.password_reset import PasswordResetToken
+        
+        cutoff_time = datetime.now(timezone.utc) - timedelta(days=days_old)
+        stats = {
+            "user_tokens": 0,
+            "oauth2_tokens": 0,
+            "client_tokens": 0,
+            "authorization_codes": 0,
+            "password_reset_tokens": 0
+        }
+        
+        try:
+            # Clean up expired user tokens
+            expired_user_tokens = db_session.query(UserToken).filter(
+                UserToken.expires_at < datetime.now(timezone.utc),
+                UserToken.created_at < cutoff_time
+            )
+            stats["user_tokens"] = expired_user_tokens.count()
+            expired_user_tokens.delete()
+            
+            # Clean up expired OAuth2 tokens
+            expired_oauth2_tokens = db_session.query(OAuth2Token).filter(
+                OAuth2Token.expires_at < datetime.now(timezone.utc),
+                OAuth2Token.created_at < cutoff_time
+            )
+            stats["oauth2_tokens"] = expired_oauth2_tokens.count()
+            expired_oauth2_tokens.delete()
+            
+            # Clean up expired client tokens
+            stats["client_tokens"] = OAuth2ClientToken.cleanup_expired_tokens(db_session, days_old)
+            
+            # Clean up expired authorization codes (these should be short-lived anyway)
+            expired_auth_codes = db_session.query(OAuth2AuthorizationCode).filter(
+                OAuth2AuthorizationCode.expires_at < datetime.now(timezone.utc),
+                OAuth2AuthorizationCode.created_at < cutoff_time
+            )
+            stats["authorization_codes"] = expired_auth_codes.count()
+            expired_auth_codes.delete()
+            
+            # Clean up expired password reset tokens
+            expired_reset_tokens = db_session.query(PasswordResetToken).filter(
+                PasswordResetToken.expires_at < datetime.now(timezone.utc),
+                PasswordResetToken.created_at < cutoff_time
+            )
+            stats["password_reset_tokens"] = expired_reset_tokens.count()
+            expired_reset_tokens.delete()
+            
+            # Commit all deletions
+            db_session.commit()
+            
+            total_cleaned = sum(stats.values())
+            if total_cleaned > 0:
+                logger.info(f"Token cleanup completed: {total_cleaned} tokens removed")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Token cleanup error: {str(e)}")
+            db_session.rollback()
+            return stats
+    
+    @staticmethod
+    async def revoke_all_user_tokens(user_id: int, db_session, redis_client, reason: str = "user_action") -> int:
+        """
+        Revoke all tokens for a specific user.
+        
+        Args:
+            user_id: User ID to revoke tokens for
+            db_session: Database session
+            redis_client: Redis client for blacklisting
+            reason: Reason for revocation
+            
+        Returns:
+            Number of tokens revoked
+        """
+        from app.models.user_token import UserToken
+        
+        try:
+            # Get all active tokens for the user
+            active_tokens = db_session.query(UserToken).filter(
+                UserToken.user_id == user_id,
+                UserToken.is_revoked == False,
+                UserToken.expires_at > datetime.now(timezone.utc)
+            ).all()
+            
+            revoked_count = 0
+            
+            for token_record in active_tokens:
+                # Mark as revoked in database
+                token_record.is_revoked = True
+                token_record.revoked_at = datetime.now(timezone.utc)
+                token_record.revoked_reason = reason
+                
+                # Add to blacklist in Redis (if we had the actual token value)
+                # Note: We store JTI in database, but need the full token for blacklisting
+                # This is a design trade-off for security vs functionality
+                
+                revoked_count += 1
+            
+            if revoked_count > 0:
+                db_session.commit()
+                logger.info(f"Revoked {revoked_count} tokens for user {user_id}, reason: {reason}")
+            
+            return revoked_count
+            
+        except Exception as e:
+            logger.error(f"Error revoking user tokens: {str(e)}")
+            db_session.rollback()
+            return 0
+    
+    @staticmethod
+    def should_rotate_token(token_age_seconds: int, max_age_seconds: int = None) -> bool:
+        """
+        Determine if a token should be rotated based on age.
+        
+        Args:
+            token_age_seconds: Age of the token in seconds
+            max_age_seconds: Maximum age before rotation (defaults to half of refresh token lifetime)
+            
+        Returns:
+            True if token should be rotated
+        """
+        if max_age_seconds is None:
+            # Default to half of refresh token lifetime
+            max_age_seconds = (settings.jwt_refresh_token_expire_days * 24 * 60 * 60) // 2
+        
+        return token_age_seconds >= max_age_seconds
 
 
 class SecurityAudit:

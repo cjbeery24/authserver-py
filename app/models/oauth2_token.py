@@ -7,6 +7,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Inde
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.core.config import settings
 
 
 class OAuth2Token(BaseModel):
@@ -51,11 +52,44 @@ class OAuth2Token(BaseModel):
     def is_refresh_token(self):
         """Check if this is a refresh token."""
         return self.token_type == "refresh"
-
-    @property
-    def is_client_credentials_token(self):
-        """Check if this token was issued for client credentials flow (no user)."""
-        return self.user_id is None
+    
+    def set_access_token(self, token: str):
+        """Set access token with optional encryption."""
+        if settings.encrypt_tokens_in_db:
+            from app.core.security import TokenEncryption
+            self.access_token = TokenEncryption.encrypt_token(token)
+        else:
+            self.access_token = token
+    
+    def get_access_token(self) -> str:
+        """Get access token with optional decryption."""
+        if not self.access_token:
+            return None
+        
+        if settings.encrypt_tokens_in_db:
+            from app.core.security import TokenEncryption
+            return TokenEncryption.decrypt_token(self.access_token)
+        else:
+            return self.access_token
+    
+    def set_refresh_token(self, token: str):
+        """Set refresh token with optional encryption."""
+        if settings.encrypt_tokens_in_db:
+            from app.core.security import TokenEncryption
+            self.refresh_token = TokenEncryption.encrypt_token(token)
+        else:
+            self.refresh_token = token
+    
+    def get_refresh_token(self) -> str:
+        """Get refresh token with optional decryption."""
+        if not self.refresh_token:
+            return None
+            
+        if settings.encrypt_tokens_in_db:
+            from app.core.security import TokenEncryption
+            return TokenEncryption.decrypt_token(self.refresh_token)
+        else:
+            return self.refresh_token
 
     def get_scopes(self):
         """Get list of scopes from JSON string."""

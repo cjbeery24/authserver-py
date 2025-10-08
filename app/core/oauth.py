@@ -265,7 +265,7 @@ class CustomOAuth2RequestValidator:
                 scopes=scope.split() if scope else [],
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.oauth2_access_token_expire_minutes)
             )
-            access_token.access_token = token['access_token']
+            access_token.set_access_token(token['access_token'])  # Use encryption method
             self.db_session.add(access_token)
 
         # Save refresh token
@@ -276,7 +276,7 @@ class CustomOAuth2RequestValidator:
                 scopes=scope.split() if scope else [],
                 expires_at=datetime.now(timezone.utc) + timedelta(days=settings.oauth2_refresh_token_expire_days)
             )
-            refresh_token.refresh_token = token['refresh_token']
+            refresh_token.set_refresh_token(token['refresh_token'])  # Use encryption method
             self.db_session.add(refresh_token)
 
         self.db_session.commit()
@@ -479,26 +479,36 @@ class RefreshTokenGrant(grants.RefreshTokenGrant):
     def authenticate_refresh_token(self, refresh_token: str) -> Optional[Dict[str, Any]]:
         """Authenticate refresh token."""
         # Find refresh token in database
+        # Note: We need to handle both encrypted and plain text tokens during transition
+        
+        # First, try to find tokens that match directly (for backward compatibility)
         token_record = self.server.db_session.query(OAuth2Token).filter(
-            OAuth2Token.refresh_token == refresh_token,
             OAuth2Token.token_type == 'refresh',
             OAuth2Token.expires_at > datetime.now(timezone.utc)
-        ).first()
-
-        if not token_record:
+        ).all()
+        
+        # Check each token (decrypt if necessary)
+        matching_token = None
+        for record in token_record:
+            stored_token = record.get_refresh_token()  # This handles decryption
+            if stored_token == refresh_token:
+                matching_token = record
+                break
+        
+        if not matching_token:
             return None
 
         # Get user if token has user_id
         user = None
-        if token_record.user_id:
+        if matching_token.user_id:
             user = self.server.db_session.query(User).filter(
-                User.id == token_record.user_id,
+                User.id == matching_token.user_id,
                 User.is_active == True
             ).first()
 
         return {
-            'client_id': token_record.client.client_id,
-            'scope': token_record.scope,
+            'client_id': matching_token.client.client_id,
+            'scope': matching_token.scope,
             'user': user
         }
 

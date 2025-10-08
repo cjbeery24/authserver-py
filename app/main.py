@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 
 # Import custom middleware
 from app.middleware import AuthMiddleware, OptionalAuthMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 from app.core.config import settings, get_cors_origins, get_cors_methods, get_cors_headers
 from app.core.redis import get_redis
@@ -54,29 +55,32 @@ async def lifespan(app: FastAPI):
 
 async def schedule_token_cleanup():
     """
-    Background task to periodically clean up expired OAuth2 tokens.
+    Background task to periodically clean up expired tokens and perform maintenance.
 
     Runs every 24 hours.
     """
     from app.core.database import get_db_session
-    from app.core.oauth import create_authorization_server
+    from app.core.security import TokenRotation
 
     while True:
         try:
             # Wait 24 hours between cleanups
             await asyncio.sleep(24 * 60 * 60)  # 24 hours in seconds
 
-            logger.info("Running scheduled OAuth2 token cleanup...")
+            logger.info("Running scheduled token cleanup and maintenance...")
 
             # Create database session and clean up tokens
             db = next(get_db_session())
             try:
-                server = create_authorization_server(db)
-                cleaned_count = server.validator.cleanup_expired_tokens(days_old=30)
-                if cleaned_count > 0:
-                    logger.info(f"Scheduled cleanup: removed {cleaned_count} expired tokens")
+                # Enhanced token cleanup
+                cleanup_stats = await TokenRotation.cleanup_expired_tokens(db, days_old=30)
+                
+                total_cleaned = sum(cleanup_stats.values())
+                if total_cleaned > 0:
+                    logger.info(f"Scheduled cleanup completed: {cleanup_stats}")
                 else:
                     logger.debug("Scheduled cleanup: no expired tokens to remove")
+                    
             finally:
                 db.close()
 
@@ -104,6 +108,10 @@ if settings.cors_enabled:
         allow_methods=get_cors_methods(),
         allow_headers=get_cors_headers(),
     ) 
+
+# Add security headers middleware (first to ensure all responses have security headers)
+app.add_middleware(SecurityHeadersMiddleware)
+logger.info("Security headers middleware enabled")
 
 # Add trusted host middleware for security
 app.add_middleware(
@@ -164,10 +172,12 @@ async def root():
 from app.api.v1.health import router as health_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.oauth import router as oauth_router
+from app.api.v1.security import router as security_router
 
 app.include_router(health_router, prefix="/api/v1", tags=["health"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
 app.include_router(oauth_router, prefix="/oauth", tags=["oauth"])
+app.include_router(security_router, prefix="/api/v1/security", tags=["security"])
 
 # TODO: Add more routers as we implement them
 # from app.api.v1.users import router as users_router
