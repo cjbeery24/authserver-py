@@ -138,3 +138,8 @@ class MFASecret(BaseModel):
         return cls.create_for_user(
             db_session, user_id, generate_secret, generate_backup_codes
         )
+    
+    @staticmethod
+    def get_backup_code_expiry(expiry_days: int = 365) -> datetime:
+        """Calculate backup code expiry timestamp."""
+        return datetime.now(timezone.utc) + timedelta(days=expiry_days)
