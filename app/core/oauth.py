@@ -234,21 +234,22 @@ class CustomOAuth2RequestValidator:
             self.db_session.commit()
 
     def authenticate_user(self, username: str, password: str, client, request):
-        """Authenticate user for password grant."""
-        # Find user by username
-        user = self.db_session.query(User).filter(
-            User.username == username,
-            User.is_active == True
-        ).first()
-
-        if not user:
-            return None
-
-        # Verify password
-        from app.core.security import PasswordHasher
-        if not PasswordHasher.verify_password(password, user.password_hash):
-            return None
-
+        """
+        Authenticate user for password grant.
+        
+        Uses centralized AuthenticationManager for consistent authentication logic.
+        """
+        from app.core.security import AuthenticationManager
+        
+        # Use centralized authentication (no MFA for OAuth password grant)
+        # Note: For OAuth, we don't use redis_client or track failed attempts here
+        # OAuth has its own rate limiting
+        user = AuthenticationManager.verify_password_only(
+            username=username,
+            password=password,
+            db_session=self.db_session
+        )
+        
         return user
 
     def save_token(self, token: Dict[str, Any], request) -> None:

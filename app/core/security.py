@@ -1733,4 +1733,217 @@ class TokenBlacklist:
         logger.debug("Token blacklist cleanup completed (Redis handles expiration automatically)")
 
 
+class AuthenticationManager:
+    """
+    Centralized authentication logic for user login and verification.
+    
+    This class consolidates authentication logic that was previously duplicated
+    across multiple endpoints, providing a single source of truth for:
+    - User lookup and validation
+    - Password verification
+    - MFA checking (TOTP and backup codes)
+    - Failed login tracking
+    - Account status verification
+    """
+    
+    @staticmethod
+    async def authenticate_user(
+        username: str,
+        password: str,
+        db_session,
+        redis_client=None,
+        mfa_token: Optional[str] = None,
+        client_ip: str = "unknown"
+    ) -> Tuple[Optional[Any], bool, Optional[str]]:
+        """
+        Authenticate a user with username/password and optional MFA.
+        
+        This method handles the complete authentication flow including:
+        - User lookup
+        - Password verification
+        - Account status checking
+        - MFA validation (if enabled)
+        - Failed login tracking
+        
+        Args:
+            username: Username to authenticate
+            password: Password to verify
+            db_session: Database session (injected)
+            redis_client: Redis client for rate limiting (injected, optional)
+            mfa_token: MFA token (TOTP or backup code, optional)
+            client_ip: Client IP address for security logging
+            
+        Returns:
+            Tuple of (User object or None, requires_mfa: bool, error_message: str or None)
+            
+        Examples:
+            # Without MFA
+            user, requires_mfa, error = await AuthenticationManager.authenticate_user(
+                "john", "password123", db, redis_client
+            )
+            if error:
+                raise HTTPException(401, error)
+            if requires_mfa:
+                return {"mfa_required": True}
+            # user is authenticated
+            
+            # With MFA
+            user, requires_mfa, error = await AuthenticationManager.authenticate_user(
+                "john", "password123", db, redis_client, mfa_token="123456"
+            )
+        """
+        from app.models.user import User
+        from app.models.mfa_secret import MFASecret
+        
+        # Find user by username
+        user = db_session.query(User).filter(User.username == username).first()
+        
+        if not user:
+            # Record failed login attempt
+            if redis_client and settings.auth_rate_limit_enabled:
+                await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
+            
+            return None, False, "Invalid credentials"
+        
+        # Verify password
+        if not PasswordHasher.verify_password(password, user.password_hash):
+            # Record failed login attempt
+            if redis_client and settings.auth_rate_limit_enabled:
+                await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
+            
+            return None, False, "Invalid credentials"
+        
+        # Check if user account is active
+        if not user.is_active:
+            return None, False, "Account is deactivated"
+        
+        # Check MFA if enabled for user
+        mfa_secret = db_session.query(MFASecret).filter(
+            MFASecret.user_id == user.id,
+            MFASecret.is_enabled == True
+        ).first()
+        
+        # If MFA is enabled but no token provided, indicate MFA is required
+        if mfa_secret and not mfa_token:
+            return user, True, None  # MFA required
+        
+        # If MFA is enabled and token provided, verify it
+        if mfa_secret and mfa_token:
+            mfa_valid = await AuthenticationManager._verify_mfa_token(
+                mfa_secret, 
+                mfa_token, 
+                db_session
+            )
+            
+            if not mfa_valid:
+                # Record failed MFA attempt
+                if redis_client and settings.auth_rate_limit_enabled:
+                    await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
+                
+                return None, False, "Invalid MFA token"
+        
+        # Reset failed login attempts on successful authentication
+        if redis_client and settings.auth_rate_limit_enabled:
+            await FailedLoginTracker.reset_failed_attempts(client_ip, redis_client)
+        
+        # Authentication successful
+        return user, False, None
+    
+    @staticmethod
+    async def _verify_mfa_token(mfa_secret, mfa_token: str, db_session) -> bool:
+        """
+        Verify MFA token (TOTP or backup code).
+        
+        Args:
+            mfa_secret: MFASecret model instance
+            mfa_token: Token to verify
+            db_session: Database session for backup code consumption
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        # Try TOTP verification first
+        if MFAHandler.verify_totp(mfa_secret.secret, mfa_token):
+            return True
+        
+        # Try backup code verification
+        if mfa_secret.validate_backup_code(mfa_token):
+            db_session.commit()  # Save backup code consumption
+            return True
+        
+        return False
+    
+    @staticmethod
+    def verify_password_only(username: str, password: str, db_session) -> Optional[Any]:
+        """
+        Verify username and password only (no MFA check).
+        
+        Useful for operations that require password confirmation
+        but don't need full authentication flow.
+        
+        Args:
+            username: Username to verify
+            password: Password to verify
+            db_session: Database session (injected)
+            
+        Returns:
+            User object if credentials valid, None otherwise
+            
+        Example:
+            user = AuthenticationManager.verify_password_only("john", "pass", db)
+            if not user:
+                raise HTTPException(401, "Invalid credentials")
+        """
+        from app.models.user import User
+        
+        # Find user
+        user = db_session.query(User).filter(User.username == username).first()
+        
+        if not user:
+            return None
+        
+        # Verify password
+        if not PasswordHasher.verify_password(password, user.password_hash):
+            return None
+        
+        # Check if active
+        if not user.is_active:
+            return None
+        
+        return user
+    
+    @staticmethod
+    def verify_user_password(user, password: str) -> bool:
+        """
+        Verify a user's password.
+        
+        Simpler method for when you already have the user object.
+        
+        Args:
+            user: User object
+            password: Password to verify
+            
+        Returns:
+            True if password is valid
+            
+        Example:
+            if not AuthenticationManager.verify_user_password(current_user, password):
+                raise HTTPException(400, "Invalid password")
+        """
+        return PasswordHasher.verify_password(password, user.password_hash)
+    
+    @staticmethod
+    def is_user_active(user) -> bool:
+        """
+        Check if user account is active.
+        
+        Args:
+            user: User object
+            
+        Returns:
+            True if active
+        """
+        return bool(user and user.is_active)
+
+
 # Enhanced utility functions

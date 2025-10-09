@@ -21,7 +21,8 @@ from app.core.security import (
     FailedRefreshTracker,
     TokenGenerator,
     TokenBlacklist,
-    SecureTokenHasher
+    SecureTokenHasher,
+    AuthenticationManager
 )
 from app.core.errors import AuthError
 from app.core.redis import get_redis_dependency
@@ -106,7 +107,7 @@ async def progressive_refresh_rate_limit(
         raise AuthError.too_many_refresh_attempts(failed_count, penalty_duration)
 
 
-# Helper function for authentication logic
+# Helper function for authentication logic (now uses centralized AuthenticationManager)
 async def _authenticate_user(
     request: Request,
     username: str,
@@ -118,6 +119,8 @@ async def _authenticate_user(
     """
     Authenticate user with username/password and optional MFA.
     
+    Uses centralized AuthenticationManager for consistent authentication logic.
+    
     Returns:
         tuple: (User object, requires_mfa: bool)
         
@@ -126,62 +129,30 @@ async def _authenticate_user(
     """
     # Get client IP for failed login tracking
     client_ip = request.client.host if request.client else "unknown"
-
-    # Find user by username
-    user = db.query(User).filter(User.username == username).first()
-    if not user:
-        # Record failed login attempt
-        if settings.auth_rate_limit_enabled:
-            await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
-
-        raise AuthError.invalid_credentials()
-
-    # Verify password
-    if not PasswordHasher.verify_password(password, user.password_hash):
-        # Record failed login attempt
-        if settings.auth_rate_limit_enabled:
-            await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
-
-        raise AuthError.invalid_credentials()
-
-    # Check if user is active
-    if not user.is_active:
-        raise AuthError.account_deactivated()
-
-    # Check MFA if enabled for user
-    mfa_secret = db.query(MFASecret).filter(
-        MFASecret.user_id == user.id,
-        MFASecret.is_enabled == True
-    ).first()
-
-    # If MFA is enabled but no token provided, indicate MFA is required
-    if mfa_secret and not mfa_token:
-        return user, True  # MFA required
-
-    # If MFA is enabled and token provided, verify it
-    if mfa_secret and mfa_token:
-        mfa_valid = False
-
-        # Try TOTP verification first
-        if MFAHandler.verify_totp(mfa_secret.secret, mfa_token):
-            mfa_valid = True
-        # Try backup code verification
-        elif mfa_secret.validate_backup_code(mfa_token):
-            mfa_valid = True
-            db.commit()  # Save backup code consumption
-
-        if not mfa_valid:
-            # Record failed MFA attempt
-            if settings.auth_rate_limit_enabled:
-                await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
-
+    
+    # Use centralized authentication manager
+    user, requires_mfa, error = await AuthenticationManager.authenticate_user(
+        username=username,
+        password=password,
+        db_session=db,
+        redis_client=redis_client,
+        mfa_token=mfa_token,
+        client_ip=client_ip
+    )
+    
+    # Handle authentication errors
+    if error:
+        if "Invalid credentials" in error:
+            raise AuthError.invalid_credentials()
+        elif "deactivated" in error:
+            raise AuthError.account_deactivated()
+        elif "Invalid MFA" in error:
             raise AuthError.invalid_mfa_token()
-
-    # Reset failed login attempts on successful authentication
-    if settings.auth_rate_limit_enabled:
-        await FailedLoginTracker.reset_failed_attempts(client_ip, redis_client)
-
-    return user, False  # Authentication successful, no MFA required
+        else:
+            raise AuthError.invalid_credentials()
+    
+    # Return user and MFA requirement status
+    return user, requires_mfa
 
 
 async def _create_token_response(

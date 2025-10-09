@@ -11,7 +11,7 @@ import json
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import PasswordHasher
+from app.core.security import PasswordHasher, AuthenticationManager
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.middleware import get_current_user_or_401
@@ -119,7 +119,7 @@ async def update_user_profile(
                 detail="Current password required for email change"
             )
         
-        if not PasswordHasher.verify_password(profile_update.current_password, current_user.password_hash):
+        if not AuthenticationManager.verify_user_password(current_user, profile_update.current_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid current password"
@@ -169,8 +169,8 @@ async def update_password(
     
     Requires current password verification.
     """
-    # Verify current password
-    if not PasswordHasher.verify_password(password_update.current_password, current_user.password_hash):
+    # Verify current password using centralized authentication manager
+    if not AuthenticationManager.verify_user_password(current_user, password_update.current_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid current password"
@@ -253,8 +253,8 @@ async def delete_account(
     This is a permanent action that cannot be undone.
     Requires password verification.
     """
-    # Verify password
-    if not PasswordHasher.verify_password(password, current_user.password_hash):
+    # Verify password using centralized authentication manager
+    if not AuthenticationManager.verify_user_password(current_user, password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid password"

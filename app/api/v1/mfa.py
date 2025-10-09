@@ -16,7 +16,7 @@ import base64
 from app.core.database import get_db
 from app.core.redis import get_redis_dependency
 from app.core.config import settings
-from app.core.security import MFAHandler, SecureTokenHasher
+from app.core.security import MFAHandler, SecureTokenHasher, AuthenticationManager
 from app.core.errors import AuthError
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
@@ -248,10 +248,8 @@ async def disable_mfa(
     
     Requires password verification for security.
     """
-    from app.core.security import PasswordHasher
-    
-    # Verify password
-    if not PasswordHasher.verify_password(disable_request.password, current_user.password_hash):
+    # Verify password using centralized authentication manager
+    if not AuthenticationManager.verify_user_password(current_user, disable_request.password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid password"
@@ -633,8 +631,6 @@ async def complete_mfa_recovery(
     - disable: Completely disable MFA
     - reset: Generate new secret and backup codes
     """
-    from app.core.security import PasswordHasher
-    
     # Validate recovery token (check all users since we don't know which user)
     # redis_client injected via Depends
     recovery_token_hash = SecureTokenHasher.hash_token(recovery_request.recovery_token)[:16]
@@ -671,7 +667,8 @@ async def complete_mfa_recovery(
             detail="User not found"
         )
     
-    if not PasswordHasher.verify_password(recovery_request.password, user.password_hash):
+    # Verify password using centralized authentication manager
+    if not AuthenticationManager.verify_user_password(user, recovery_request.password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid password"
