@@ -599,15 +599,20 @@ def create_oauth2_token_response_with_id_token(
         # Get user from database
         user = db_session.query(User).filter(User.id == user_id).first()
         if user:
+            # Get user roles for inclusion in token
+            from app.core.rbac import PermissionChecker
+            user_roles = PermissionChecker.get_user_roles(user.id, db_session)
+            
             user_data = {
                 "sub": str(user.id),
                 "user_id": user.id,
                 "username": user.username,
                 "email": user.email,
-                "email_verified": True  # Assume verified for now
+                "email_verified": True,  # Assume verified for now
+                "roles": [role.name for role in user_roles]  # Include roles in token
             }
     
-    # Use the enhanced token creation method
+    # Use the enhanced token creation method (roles will be included from user_data)
     token_response = TokenManager.create_oauth2_token_response(
         user_data=user_data,
         client_id=client_id,

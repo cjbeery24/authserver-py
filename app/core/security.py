@@ -521,7 +521,12 @@ class TokenManager:
 
     @staticmethod
     def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True) -> str:
-        """Create a JWT access token."""
+        """
+        Create a JWT access token.
+        
+        The data dict should include user information and optionally 'roles' (list of role names).
+        Roles will be included in the token payload for authorization by consuming applications.
+        """
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.now(timezone.utc) + expires_delta
@@ -547,7 +552,12 @@ class TokenManager:
 
     @staticmethod
     def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True) -> str:
-        """Create a JWT refresh token."""
+        """
+        Create a JWT refresh token.
+        
+        The data dict should include user information and optionally 'roles' (list of role names).
+        Roles are included in refresh tokens so they can be propagated when refreshing access tokens.
+        """
         to_encode = data.copy()
         if expires_delta:
             expire = datetime.now(timezone.utc) + expires_delta
@@ -710,7 +720,7 @@ class TokenManager:
         Create OAuth2/OIDC token response with ID token when openid scope is present.
         
         Args:
-            user_data: Dictionary containing user information
+            user_data: Dictionary containing user information (should include 'roles' list)
             client_id: OAuth2 client ID
             scopes: List of granted scopes
             nonce: Optional nonce from authorization request
@@ -719,7 +729,7 @@ class TokenManager:
         Returns:
             Token response dictionary
         """
-        # Create standard access and refresh tokens
+        # Create standard access and refresh tokens (roles will be included from user_data)
         access_token = TokenManager.create_access_token(user_data)
         refresh_token = TokenManager.create_refresh_token(user_data)
         
@@ -1067,11 +1077,16 @@ class TokenRotation:
                 logger.warning("Token rotation failed: user not found or inactive")
                 return None
             
-            # Create new token pair
+            # Get user roles for inclusion in token
+            from app.core.rbac import PermissionChecker
+            user_roles = PermissionChecker.get_user_roles(user.id, db_session)
+            
+            # Create new token pair with roles
             user_data = {
                 "sub": str(user.id),
                 "username": user.username,
-                "email": user.email
+                "email": user.email,
+                "roles": [role.name for role in user_roles]  # Include roles in token
             }
             
             new_tokens = TokenManager.create_token_pair(user_data)

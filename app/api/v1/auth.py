@@ -174,10 +174,15 @@ async def _create_token_response(
         old_refresh_token: Previous refresh token to blacklist (for token rotation)
         redis_client: Redis client for token blacklisting
     """
+    # Get user roles for inclusion in token
+    from app.core.rbac import PermissionChecker
+    user_roles = PermissionChecker.get_user_roles(user.id, db)
+    
     token_data = {
         "sub": str(user.id),
         "username": user.username,
-        "email": user.email
+        "email": user.email,
+        "roles": [role.name for role in user_roles]  # Include roles in token
     }
 
     tokens = TokenManager.create_token_pair(token_data)
