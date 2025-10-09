@@ -4,7 +4,7 @@ Request validation and sanitization middleware using industry-standard libraries
 This middleware provides:
 - Input sanitization using bleach (industry standard)
 - Request size and content-type validation
-- Basic path traversal protection
+- Path traversal protection (using os.path normalization)
 - Pydantic-based validation (via FastAPI)
 
 Note: SQL injection is prevented by SQLAlchemy's parameterized queries.
@@ -21,6 +21,12 @@ import bleach
 from markupsafe import escape
 
 from app.core.config import settings
+from app.core.security_utils import (
+    PathSecurityValidator,
+    HeaderSecurityValidator,
+    InputSecurityValidator,
+    SecurityConfig
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,24 +48,12 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        max_request_size: int = 10 * 1024 * 1024,  # 10MB
+        max_request_size: int = None,
         allowed_content_types: list = None
     ):
         super().__init__(app)
-        self.max_request_size = max_request_size
-        self.allowed_content_types = allowed_content_types or [
-            "application/json",
-            "application/x-www-form-urlencoded",
-            "multipart/form-data",
-            "text/plain"
-        ]
-        
-        # Simple path traversal patterns (basic check only)
-        self.path_traversal_patterns = [
-            re.compile(r"\.\./"),
-            re.compile(r"\.\.\\"),
-            re.compile(r"%2e%2e[/\\]", re.IGNORECASE)
-        ]
+        self.max_request_size = max_request_size or SecurityConfig.MAX_REQUEST_SIZE
+        self.allowed_content_types = allowed_content_types or list(SecurityConfig.ALLOWED_CONTENT_TYPES)
     
     async def dispatch(self, request: Request, call_next) -> Response:
         """Validate incoming requests using industry best practices."""
@@ -84,21 +78,26 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
         
         # Check request size (basic DoS prevention)
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self.max_request_size:
-            logger.warning(
-                f"Request too large: {content_length} bytes | "
-                f"max={self.max_request_size} | "
-                f"path={request.url.path}"
+        if content_length:
+            is_valid, error_msg = InputSecurityValidator.is_valid_content_length(
+                content_length, 
+                self.max_request_size
             )
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Request body too large. Maximum size: {self.max_request_size} bytes"
-            )
+            if not is_valid:
+                logger.warning(
+                    f"Invalid content length: {error_msg} | "
+                    f"path={request.url.path} | "
+                    f"client={request.client.host if request.client else 'unknown'}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Request body too large. Maximum size: {self.max_request_size} bytes"
+                )
         
-        # Basic path traversal check (simple patterns only)
-        if self._contains_obvious_path_traversal(request.url.path):
+        # Path traversal check (using os.path normalization)
+        if not PathSecurityValidator.is_safe_path(request.url.path):
             logger.error(
-                f"Potential path traversal detected | "
+                f"Path traversal attempt detected | "
                 f"path={request.url.path} | "
                 f"client={request.client.host if request.client else 'unknown'}"
             )
@@ -138,33 +137,33 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
             for allowed in self.allowed_content_types
         )
     
-    def _contains_obvious_path_traversal(self, path: str) -> bool:
-        """
-        Check for obvious path traversal patterns.
-        
-        Note: This is a basic check. The OS and web server should also
-        prevent path traversal. This is just an additional layer.
-        """
-        return any(
-            pattern.search(path)
-            for pattern in self.path_traversal_patterns
-        )
-    
     def _validate_headers(self, request: Request) -> None:
-        """Validate request headers."""
-        max_header_length = 8192
+        """Validate request headers using centralized security utilities."""
         for name, value in request.headers.items():
-            if len(value) > max_header_length:
+            is_valid, error_msg = HeaderSecurityValidator.validate_header_value(
+                name, 
+                value,
+                max_length=SecurityConfig.MAX_HEADER_LENGTH
+            )
+            if not is_valid:
                 logger.warning(
-                    f"Excessively long header | "
-                    f"header={name} | "
-                    f"length={len(value)} | "
+                    f"Invalid header: {error_msg} | "
                     f"path={request.url.path}"
                 )
                 raise HTTPException(
                     status_code=status.HTTP_431_REQUEST_HEADER_FIELDS_TOO_LARGE,
-                    detail="Request header too large"
+                    detail="Request header validation failed"
                 )
+        
+        # Check for suspicious User-Agent (optional - log only, don't block)
+        user_agent = request.headers.get("user-agent", "")
+        if HeaderSecurityValidator.is_suspicious_user_agent(user_agent):
+            logger.warning(
+                f"Suspicious User-Agent detected | "
+                f"user_agent={user_agent[:100]} | "
+                f"path={request.url.path} | "
+                f"client={request.client.host if request.client else 'unknown'}"
+            )
 
 
 class InputSanitizer:
@@ -272,12 +271,27 @@ class InputSanitizer:
         """
         Sanitize a filename to prevent directory traversal.
         
+        Uses centralized PathSecurityValidator for validation,
+        then cleans the filename.
+        
         Args:
             filename: Filename to sanitize
             
         Returns:
             Safe filename
+            
+        Raises:
+            ValueError: If filename is dangerous and cannot be sanitized
         """
+        if not filename:
+            return "unnamed"
+        
+        # Validate using centralized security utils
+        is_valid, error_msg = PathSecurityValidator.validate_filename(filename)
+        if not is_valid:
+            # If validation fails, try to clean it
+            logger.warning(f"Dangerous filename detected: {error_msg} | filename={filename}")
+        
         # Remove path components
         filename = filename.split("/")[-1].split("\\")[-1]
         
@@ -292,10 +306,10 @@ class InputSanitizer:
             filename = filename[1:]
         
         # Limit length
-        max_filename_length = 255
-        if len(filename) > max_filename_length:
+        if len(filename) > SecurityConfig.MAX_FILENAME_LENGTH:
             name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
-            filename = name[:max_filename_length - len(ext) - 1] + "." + ext if ext else name[:max_filename_length]
+            max_name_length = SecurityConfig.MAX_FILENAME_LENGTH - len(ext) - 1
+            filename = name[:max_name_length] + "." + ext if ext else name[:SecurityConfig.MAX_FILENAME_LENGTH]
         
         return filename or "unnamed"
     
