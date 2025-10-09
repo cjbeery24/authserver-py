@@ -3,24 +3,17 @@ Authentication middleware for JWT token validation and user context management.
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional
 from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from app.core.config import settings
-from app.core.security import TokenManager, TokenBlacklist
-from app.core.redis import get_redis
+from app.core.token_utils import TokenUtils
 from app.models.user import User
-from app.core.database import get_db
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
-
-# Security scheme for extracting tokens
-security = HTTPBearer(auto_error=False)
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -54,20 +47,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if self._should_skip_auth(request.url.path):
             return await call_next(request)
 
-        # Extract and validate token
-        token_data = await self._extract_token(request)
-        if not token_data:
-            return await self._unauthorized_response("Missing or invalid authentication token")
-
-        # Validate token and get user context
-        user_context = await self._validate_token_and_get_user(request, token_data)
+        # Extract and validate token using shared utility
+        user_context = await TokenUtils.extract_and_validate(request, required=True)
+        
         if not user_context:
-            return await self._unauthorized_response("Invalid or expired token")
+            return await self._unauthorized_response("Missing or invalid authentication token")
 
         # Add user context to request state
         request.state.user = user_context["user"]
         request.state.token_data = user_context["token_data"]
-        request.state.raw_token = token_data  # Store raw token for blacklisting
+        
+        # Store raw token for blacklisting (extract again since we need the string)
+        raw_token = await TokenUtils.extract_token(request)
+        request.state.raw_token = raw_token
 
         # Process the request
         response = await call_next(request)
@@ -86,78 +78,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return True
 
         return False
-
-    async def _extract_token(self, request: Request) -> Optional[str]:
-        """
-        Extract JWT token from request.
-
-        Supports:
-        - Authorization header (Bearer token)
-        - Query parameter (?token=...)
-        - Cookie (auth_token)
-        """
-        # Try Authorization header first
-        credentials: Optional[HTTPAuthorizationCredentials] = await security(request)
-        if credentials:
-            return credentials.credentials
-
-        # Try query parameter
-        token = request.query_params.get("token")
-        if token:
-            return token
-
-        # Try cookie
-        token = request.cookies.get("auth_token")
-        if token:
-            return token
-
-        return None
-
-    async def _validate_token_and_get_user(self, request: Request, token: str) -> Optional[Dict[str, Any]]:
-        """
-        Validate JWT token and return user context.
-        """
-        try:
-            # Get Redis client for token validation
-            redis_client = await get_redis()
-
-            # Validate token
-            payload = await TokenManager.verify_token(token, "access", redis_client)
-            if not payload:
-                logger.warning(f"Token validation failed for request to {request.url.path}")
-                return None
-
-            # Get database session
-            db = next(get_db())
-
-            # Get user from database
-            user_id = int(payload.get("sub"))
-            user = db.query(User).filter(
-                User.id == user_id,
-                User.is_active == True
-            ).first()
-
-            if not user:
-                logger.warning(f"User {user_id} not found or inactive")
-                return None
-
-            # Return user context
-            return {
-                "user": user,
-                "token_data": {
-                    "user_id": user_id,
-                    "username": payload.get("username"),
-                    "email": payload.get("email"),
-                    "token_type": payload.get("type"),
-                    "issued_at": payload.get("iat"),
-                    "expires_at": payload.get("exp"),
-                    "jti": payload.get("jti")
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"Error validating token: {str(e)}")
-            return None
 
     async def _unauthorized_response(self, message: str = "Authentication required") -> JSONResponse:
         """Return standardized unauthorized response."""
@@ -185,70 +105,23 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request with optional authentication."""
         try:
-            # Try to extract and validate token
-            token = await self._extract_token(request)
-            if token:
-                user_context = await self._validate_token_and_get_user(request, token)
-                if user_context:
-                    request.state.user = user_context["user"]
-                    request.state.token_data = user_context["token_data"]
+            # Try to extract and validate token using shared utility
+            user_context = await TokenUtils.extract_and_validate(request, required=False)
+            
+            if user_context:
+                request.state.user = user_context["user"]
+                request.state.token_data = user_context["token_data"]
+                
+                # Store raw token if available
+                raw_token = await TokenUtils.extract_token(request)
+                if raw_token:
+                    request.state.raw_token = raw_token
+                    
         except Exception as e:
             logger.debug(f"Optional auth failed: {str(e)}")
             # Don't fail the request for optional auth
 
         return await call_next(request)
-
-    async def _extract_token(self, request: Request) -> Optional[str]:
-        """Extract token from request (same as AuthMiddleware)."""
-        credentials: Optional[HTTPAuthorizationCredentials] = await security(request)
-        if credentials:
-            return credentials.credentials
-
-        token = request.query_params.get("token")
-        if token:
-            return token
-
-        token = request.cookies.get("auth_token")
-        if token:
-            return token
-
-        return None
-
-    async def _validate_token_and_get_user(self, request: Request, token: str) -> Optional[Dict[str, Any]]:
-        """Validate token (same logic as AuthMiddleware)."""
-        try:
-            redis_client = await get_redis()
-            payload = await TokenManager.verify_token(token, "access", redis_client)
-
-            if not payload:
-                return None
-
-            db = next(get_db())
-            user_id = int(payload.get("sub"))
-            user = db.query(User).filter(
-                User.id == user_id,
-                User.is_active == True
-            ).first()
-
-            if not user:
-                return None
-
-            return {
-                "user": user,
-                "token_data": {
-                    "user_id": user_id,
-                    "username": payload.get("username"),
-                    "email": payload.get("email"),
-                    "token_type": payload.get("type"),
-                    "issued_at": payload.get("iat"),
-                    "expires_at": payload.get("exp"),
-                    "jti": payload.get("jti")
-                }
-            }
-
-        except Exception as e:
-            logger.debug(f"Optional auth validation error: {str(e)}")
-            return None
 
 
 # Utility functions for route protection
