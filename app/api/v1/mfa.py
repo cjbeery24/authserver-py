@@ -379,7 +379,8 @@ class MFABypassResponse(BaseModel):
     reason: str
 
 
-@router.post("/bypass/admin", response_model=MFABypassResponse)
+@router.post("/bypass/admin", response_model=MFABypassResponse,
+             dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def create_admin_mfa_bypass(
     bypass_request: MFABypassRequest,
     current_user: User = Depends(get_current_user_or_401),
@@ -391,10 +392,24 @@ async def create_admin_mfa_bypass(
     This should only be used in emergency situations when a user loses
     access to their MFA device.
     
-    TODO: Add admin role checking when RBAC is implemented.
+    Requires 'mfa:bypass' permission or 'admin' role.
     """
-    # TODO: Replace with proper admin role check
-    # For now, just log the bypass attempt
+    from app.core.rbac import PermissionChecker
+    
+    # Check if user has permission to bypass MFA
+    has_permission = PermissionChecker.has_permission(current_user.id, "mfa", "bypass", db)
+    has_admin_role = PermissionChecker.has_role(current_user.id, "admin", db)
+    
+    if not (has_permission or has_admin_role):
+        logger.warning(
+            f"Unauthorized MFA bypass attempt by user {current_user.id} "
+            f"for user {bypass_request.user_id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: admin role or mfa:bypass permission required"
+        )
+    
     logger.warning(
         f"Admin MFA bypass requested by user {current_user.id} "
         f"for user {bypass_request.user_id}, reason: {bypass_request.reason}"
@@ -429,6 +444,27 @@ async def create_admin_mfa_bypass(
     await redis_client.setex(bypass_key, expiry_seconds, bypass_data)
     
     expires_at = datetime.now(timezone.utc) + timedelta(hours=bypass_request.duration_hours)
+    
+    # Log to audit log
+    from app.models.audit_log import AuditLog
+    AuditLog.log_event(
+        db_session=db,
+        user_id=current_user.id,
+        action="mfa_bypass_created",
+        resource="user",
+        resource_id=str(bypass_request.user_id),
+        ip_address=None,  # Request object not available in this context
+        user_agent=None,
+        success=True,
+        details={
+            "event_type": "security",
+            "target_user_id": bypass_request.user_id,
+            "reason": bypass_request.reason,
+            "duration_hours": bypass_request.duration_hours,
+            "expires_at": expires_at.isoformat()
+        }
+    )
+    db.commit()
     
     logger.critical(
         f"MFA bypass created for user {bypass_request.user_id} "

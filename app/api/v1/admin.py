@@ -221,14 +221,38 @@ async def _require_admin(current_user: User = Depends(get_current_user_or_401), 
     """
     Dependency to require admin role.
     
-    For now, this is a placeholder. Will be replaced with proper RBAC check in task 5.6.
+    Checks if the user has the 'admin' role or 'admin:access' permission.
     """
-    # TODO: Implement proper permission checking in task 5.6
-    # For now, we'll allow all authenticated users (this should be restricted in production)
+    from app.core.rbac import PermissionChecker
+    
+    # Check if user has admin role or admin:access permission
+    has_admin_role = PermissionChecker.has_role(current_user.id, "admin", db)
+    has_admin_permission = PermissionChecker.has_permission(current_user.id, "admin", "access", db)
+    
+    if not (has_admin_role or has_admin_permission):
+        logger.warning(
+            f"Unauthorized admin access attempt by user {current_user.id} ({current_user.username})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: admin role or admin:access permission required"
+        )
+    
     return current_user
 
 
 # ==================== ROLE MANAGEMENT ENDPOINTS ====================
+#
+# Note: These endpoints use the _require_admin dependency which checks for 'admin' role
+# or 'admin:access' permission. For more granular control, you can use RBAC dependencies:
+#
+# from app.core.rbac import require_permission, require_role
+# 
+# Examples:
+# - dependencies=[Depends(require_permission("roles", "create"))]
+# - dependencies=[Depends(require_role("admin"))]
+# - dependencies=[Depends(require_any_role("admin", "moderator"))]
+#
 
 @router.post("/roles", response_model=RoleResponse, status_code=status.HTTP_201_CREATED,
             dependencies=[Depends(RateLimiter(times=10, minutes=1))])
