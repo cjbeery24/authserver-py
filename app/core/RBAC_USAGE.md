@@ -5,6 +5,7 @@ This guide explains how to use the RBAC system implemented in `app/core/rbac.py`
 ## Overview
 
 The RBAC system provides:
+
 - **Role-based access control**: Users can have multiple roles
 - **Permission-based access control**: Roles have permissions with resource:action granularity
 - **Permission inheritance**: Users inherit all permissions from their assigned roles
@@ -15,12 +16,14 @@ The RBAC system provides:
 ### Permissions
 
 Permissions are defined with two components:
+
 - **Resource**: The entity being accessed (e.g., "users", "roles", "posts")
 - **Action**: The operation being performed (e.g., "create", "read", "update", "delete")
 
 Permission format: `resource:action`
 
 Examples:
+
 - `users:create` - Permission to create users
 - `roles:read` - Permission to view roles
 - `posts:delete` - Permission to delete posts
@@ -30,6 +33,7 @@ Examples:
 Roles are collections of permissions. Users are assigned roles, and they inherit all permissions from those roles.
 
 Example roles:
+
 - **admin**: Full access to all resources
 - **moderator**: Can manage content but not users
 - **user**: Basic access to own profile
@@ -92,15 +96,15 @@ async def conditional_action(
     if PermissionChecker.has_permission(current_user.id, "posts", "delete", db):
         # User can delete posts
         pass
-    
+
     # Check if user has a role
     if PermissionChecker.has_role(current_user.id, "admin", db):
         # User is admin
         pass
-    
+
     # Check if user has any of multiple permissions
     if PermissionChecker.has_any_permission(
-        current_user.id, 
+        current_user.id,
         [("posts", "delete"), ("posts", "moderate")],
         db
     ):
@@ -122,7 +126,7 @@ async def some_action(
 ):
     # This will raise HTTPException 403 if user lacks permission
     enforce_permission(current_user, "posts", "delete", db)
-    
+
     # Continue with action...
 ```
 
@@ -154,6 +158,7 @@ async def some_action(
 The `/api/v1/admin` endpoints allow administrators to manage the RBAC system:
 
 ### Role Management
+
 - `POST /api/v1/admin/roles` - Create role
 - `GET /api/v1/admin/roles` - List roles
 - `GET /api/v1/admin/roles/{role_id}` - Get role details
@@ -161,16 +166,19 @@ The `/api/v1/admin` endpoints allow administrators to manage the RBAC system:
 - `DELETE /api/v1/admin/roles/{role_id}` - Delete role
 
 ### Permission Management
+
 - `POST /api/v1/admin/permissions` - Create permission
 - `GET /api/v1/admin/permissions` - List permissions
 - `DELETE /api/v1/admin/permissions/{permission_id}` - Delete permission
 
 ### User-Role Assignment
+
 - `POST /api/v1/admin/user-roles` - Assign role to user
 - `DELETE /api/v1/admin/user-roles` - Remove role from user
 - `GET /api/v1/admin/users/{user_id}/roles` - Get user's roles
 
 ### Role-Permission Assignment
+
 - `POST /api/v1/admin/role-permissions` - Assign permission to role
 - `DELETE /api/v1/admin/role-permissions` - Remove permission from role
 - `GET /api/v1/admin/roles/{role_id}/permissions` - Get role's permissions
@@ -271,14 +279,14 @@ async def update_post(
     db: Session = Depends(get_db)
 ):
     post = db.query(Post).filter(Post.id == post_id).first()
-    
+
     # Allow if user owns the post OR has admin role
     is_owner = post.user_id == current_user.id
     is_admin = PermissionChecker.has_role(current_user.id, "admin", db)
-    
+
     if not (is_owner or is_admin):
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
     # Update post...
 ```
 
@@ -294,7 +302,7 @@ async def dashboard(
     post_actions = PermissionChecker.get_user_permissions_by_resource(
         current_user.id, "posts", db
     )
-    
+
     return {
         "can_create": "create" in post_actions,
         "can_moderate": "moderate" in post_actions,
@@ -315,6 +323,7 @@ async def dashboard(
 ### Permission Denied Errors
 
 If you get 403 errors:
+
 1. Check if user has required role: `GET /api/v1/admin/users/{user_id}/roles`
 2. Check if role has required permission: `GET /api/v1/admin/roles/{role_id}/permissions`
 3. Check logs for specific permission that was denied
@@ -322,13 +331,14 @@ If you get 403 errors:
 ### Missing Permissions
 
 To see all available permissions:
+
 ```bash
 GET /api/v1/admin/permissions
 ```
 
 To see what a user can do:
+
 ```python
 permissions = PermissionChecker.get_user_permissions(user_id, db)
 print(permissions)  # Set of "resource:action" strings
 ```
-

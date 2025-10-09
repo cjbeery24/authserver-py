@@ -15,8 +15,13 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 
 # Import custom middleware
-from app.middleware import AuthMiddleware, OptionalAuthMiddleware
-from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.middleware import (
+    AuthMiddleware,
+    OptionalAuthMiddleware,
+    SecurityHeadersMiddleware,
+    RequestResponseLoggingMiddleware,
+    RequestValidationMiddleware
+)
 
 from app.core.config import settings, get_cors_origins, get_cors_methods, get_cors_headers
 from app.core.redis import get_redis
@@ -109,9 +114,22 @@ if settings.cors_enabled:
         allow_headers=get_cors_headers(),
     ) 
 
-# Add security headers middleware (first to ensure all responses have security headers)
+# Add request validation middleware (first line of defense)
+app.add_middleware(RequestValidationMiddleware)
+logger.info("Request validation middleware enabled")
+
+# Add security headers middleware (ensures all responses have security headers)
 app.add_middleware(SecurityHeadersMiddleware)
 logger.info("Security headers middleware enabled")
+
+# Add request/response logging middleware
+if settings.debug or settings.app_env in ["development", "staging"]:
+    app.add_middleware(
+        RequestResponseLoggingMiddleware,
+        log_request_body=settings.debug,
+        log_response_body=False
+    )
+    logger.info("Request/response logging middleware enabled")
 
 # Add trusted host middleware for security
 app.add_middleware(

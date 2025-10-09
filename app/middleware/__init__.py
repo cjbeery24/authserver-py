@@ -12,12 +12,30 @@ from .auth_middleware import (
     get_raw_token_or_401
 )
 
+from .security_headers import SecurityHeadersMiddleware
+from .logging_middleware import RequestResponseLoggingMiddleware, StructuredLogger
+from .validation_middleware import (
+    RequestValidationMiddleware,
+    InputSanitizer,
+    CSRFProtectionMiddleware
+)
+
 __all__ = [
+    # Authentication
     "AuthMiddleware",
     "OptionalAuthMiddleware",
     "require_auth",
     "get_current_user",
     "get_current_user_or_401",
     "get_raw_token",
-    "get_raw_token_or_401"
+    "get_raw_token_or_401",
+    # Security
+    "SecurityHeadersMiddleware",
+    # Logging
+    "RequestResponseLoggingMiddleware",
+    "StructuredLogger",
+    # Validation
+    "RequestValidationMiddleware",
+    "InputSanitizer",
+    "CSRFProtectionMiddleware"
 ]
