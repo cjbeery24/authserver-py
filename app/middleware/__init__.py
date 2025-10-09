@@ -17,7 +17,7 @@ from .logging_middleware import RequestResponseLoggingMiddleware, StructuredLogg
 from .validation_middleware import (
     RequestValidationMiddleware,
     InputSanitizer,
-    CSRFProtectionMiddleware
+    PydanticValidators
 )
 
 __all__ = [
@@ -37,5 +37,5 @@ __all__ = [
     # Validation
     "RequestValidationMiddleware",
     "InputSanitizer",
-    "CSRFProtectionMiddleware"
+    "PydanticValidators"
 ]

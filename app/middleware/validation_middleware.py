@@ -1,15 +1,24 @@
 """
-Request validation and sanitization middleware for enhanced security.
+Request validation and sanitization middleware using industry-standard libraries.
+
+This middleware provides:
+- Input sanitization using bleach (industry standard)
+- Request size and content-type validation
+- Basic path traversal protection
+- Pydantic-based validation (via FastAPI)
+
+Note: SQL injection is prevented by SQLAlchemy's parameterized queries.
+      XSS is handled by bleach and Content-Security-Policy headers.
 """
 
 import logging
 import re
-import html
-from typing import Any, Dict, Optional
+from typing import Optional
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-import json
+import bleach
+from markupsafe import escape
 
 from app.core.config import settings
 
@@ -18,31 +27,26 @@ logger = logging.getLogger(__name__)
 
 class RequestValidationMiddleware(BaseHTTPMiddleware):
     """
-    Request validation and sanitization middleware.
+    Request validation middleware using industry best practices.
     
     Features:
-    - Input sanitization (XSS prevention)
-    - SQL injection prevention
-    - Path traversal prevention
-    - Request size limits
+    - Request size limits (using Starlette built-ins where possible)
     - Content type validation
-    - Character encoding validation
+    - Path traversal prevention
+    - Basic security checks
+    
+    Note: This middleware focuses on protocol-level validation.
+    Application-level validation is handled by Pydantic models in endpoints.
     """
     
     def __init__(
         self,
         app,
         max_request_size: int = 10 * 1024 * 1024,  # 10MB
-        enable_xss_protection: bool = True,
-        enable_sql_injection_check: bool = True,
-        enable_path_traversal_check: bool = True,
         allowed_content_types: list = None
     ):
         super().__init__(app)
         self.max_request_size = max_request_size
-        self.enable_xss_protection = enable_xss_protection
-        self.enable_sql_injection_check = enable_sql_injection_check
-        self.enable_path_traversal_check = enable_path_traversal_check
         self.allowed_content_types = allowed_content_types or [
             "application/json",
             "application/x-www-form-urlencoded",
@@ -50,38 +54,21 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
             "text/plain"
         ]
         
-        # Compile regex patterns for performance
-        self.sql_injection_patterns = [
-            re.compile(r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE)\b)", re.IGNORECASE),
-            re.compile(r"(;|\-\-|\/\*|\*\/|xp_|sp_)", re.IGNORECASE),
-            re.compile(r"(\bOR\b.*=.*|1=1|' OR ')", re.IGNORECASE),
-            re.compile(r"(UNION.*SELECT)", re.IGNORECASE)
-        ]
-        
-        self.xss_patterns = [
-            re.compile(r"<script[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL),
-            re.compile(r"javascript:", re.IGNORECASE),
-            re.compile(r"on\w+\s*=", re.IGNORECASE),  # Event handlers like onclick=
-            re.compile(r"<iframe", re.IGNORECASE),
-            re.compile(r"<object", re.IGNORECASE),
-            re.compile(r"<embed", re.IGNORECASE)
-        ]
-        
+        # Simple path traversal patterns (basic check only)
         self.path_traversal_patterns = [
             re.compile(r"\.\./"),
             re.compile(r"\.\.\\"),
-            re.compile(r"%2e%2e/", re.IGNORECASE),
-            re.compile(r"%2e%2e\\", re.IGNORECASE)
+            re.compile(r"%2e%2e[/\\]", re.IGNORECASE)
         ]
     
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Validate and sanitize incoming requests."""
+        """Validate incoming requests using industry best practices."""
         
-        # Skip validation for certain endpoints (health checks, docs)
+        # Skip validation for health checks and docs
         if self._should_skip_validation(request.url.path):
             return await call_next(request)
         
-        # Validate content type
+        # Validate content type for state-changing requests
         if request.method in ["POST", "PUT", "PATCH"]:
             content_type = request.headers.get("content-type", "")
             if not self._is_valid_content_type(content_type):
@@ -95,7 +82,7 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
                     detail="Unsupported media type"
                 )
         
-        # Check request size
+        # Check request size (basic DoS prevention)
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > self.max_request_size:
             logger.warning(
@@ -108,33 +95,19 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
                 detail=f"Request body too large. Maximum size: {self.max_request_size} bytes"
             )
         
-        # Validate URL path
-        if self.enable_path_traversal_check:
-            if self._contains_path_traversal(request.url.path):
-                logger.error(
-                    f"Path traversal attempt detected | "
-                    f"path={request.url.path} | "
-                    f"client={request.client.host if request.client else 'unknown'}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid request path"
-                )
+        # Basic path traversal check (simple patterns only)
+        if self._contains_obvious_path_traversal(request.url.path):
+            logger.error(
+                f"Potential path traversal detected | "
+                f"path={request.url.path} | "
+                f"client={request.client.host if request.client else 'unknown'}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid request path"
+            )
         
-        # Validate query parameters
-        if request.url.query:
-            if self._contains_malicious_content(request.url.query):
-                logger.warning(
-                    f"Malicious query parameters detected | "
-                    f"query={request.url.query[:100]} | "
-                    f"path={request.url.path}"
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid query parameters"
-                )
-        
-        # Validate headers
+        # Validate header sizes (prevent header-based attacks)
         self._validate_headers(request)
         
         # Process request
@@ -165,44 +138,20 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
             for allowed in self.allowed_content_types
         )
     
-    def _contains_path_traversal(self, path: str) -> bool:
-        """Check if path contains path traversal attempts."""
+    def _contains_obvious_path_traversal(self, path: str) -> bool:
+        """
+        Check for obvious path traversal patterns.
+        
+        Note: This is a basic check. The OS and web server should also
+        prevent path traversal. This is just an additional layer.
+        """
         return any(
             pattern.search(path)
             for pattern in self.path_traversal_patterns
         )
     
-    def _contains_sql_injection(self, value: str) -> bool:
-        """Check if value contains SQL injection attempts."""
-        if not self.enable_sql_injection_check:
-            return False
-        
-        return any(
-            pattern.search(value)
-            for pattern in self.sql_injection_patterns
-        )
-    
-    def _contains_xss(self, value: str) -> bool:
-        """Check if value contains XSS attempts."""
-        if not self.enable_xss_protection:
-            return False
-        
-        return any(
-            pattern.search(value)
-            for pattern in self.xss_patterns
-        )
-    
-    def _contains_malicious_content(self, value: str) -> bool:
-        """Check if value contains any malicious content."""
-        return (
-            self._contains_sql_injection(value) or
-            self._contains_xss(value) or
-            self._contains_path_traversal(value)
-        )
-    
     def _validate_headers(self, request: Request) -> None:
         """Validate request headers."""
-        # Check for excessively long headers
         max_header_length = 8192
         for name, value in request.headers.items():
             if len(value) > max_header_length:
@@ -216,29 +165,85 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
                     status_code=status.HTTP_431_REQUEST_HEADER_FIELDS_TOO_LARGE,
                     detail="Request header too large"
                 )
-        
-        # Validate User-Agent (should exist for most legitimate requests)
-        if not request.headers.get("user-agent") and request.url.path not in ["/health", "/metrics"]:
-            logger.debug(
-                f"Request without User-Agent | "
-                f"path={request.url.path} | "
-                f"client={request.client.host if request.client else 'unknown'}"
-            )
 
 
 class InputSanitizer:
     """
-    Utility class for sanitizing user inputs.
+    Input sanitization utilities using industry-standard libraries.
+    
+    Uses:
+    - bleach: Industry-standard HTML sanitization (Mozilla)
+    - MarkupSafe: HTML escaping (part of Jinja2)
+    - email-validator: Email validation (via Pydantic)
     """
     
     @staticmethod
-    def sanitize_string(value: str, allow_html: bool = False) -> str:
+    def sanitize_html(
+        value: str,
+        tags: list = None,
+        attributes: dict = None,
+        strip: bool = True
+    ) -> str:
         """
-        Sanitize a string value.
+        Sanitize HTML using bleach (industry standard).
         
         Args:
-            value: The string to sanitize
-            allow_html: If False, HTML entities will be escaped
+            value: HTML string to sanitize
+            tags: Allowed HTML tags (default: none)
+            attributes: Allowed attributes per tag (default: none)
+            strip: If True, strip tags; if False, escape them
+            
+        Returns:
+            Sanitized HTML string
+        
+        Example:
+            # Strip all HTML
+            sanitize_html("<script>alert('xss')</script>")  # Returns: "alert('xss')"
+            
+            # Allow specific tags
+            sanitize_html("<p>Safe</p><script>Bad</script>", tags=['p'])  # Returns: "<p>Safe</p>Bad"
+        """
+        if not isinstance(value, str):
+            return value
+        
+        # Default: strip all tags (safest)
+        allowed_tags = tags or []
+        allowed_attributes = attributes or {}
+        
+        return bleach.clean(
+            value,
+            tags=allowed_tags,
+            attributes=allowed_attributes,
+            strip=strip
+        )
+    
+    @staticmethod
+    def escape_html(value: str) -> str:
+        """
+        Escape HTML entities using MarkupSafe (Jinja2 standard).
+        
+        This is safer than stripping for user-generated content that might
+        contain legitimate angle brackets.
+        
+        Args:
+            value: String to escape
+            
+        Returns:
+            HTML-escaped string
+        """
+        if not isinstance(value, str):
+            return value
+        
+        return str(escape(value))
+    
+    @staticmethod
+    def sanitize_string(value: str, escape_html_chars: bool = True) -> str:
+        """
+        Sanitize a string for safe storage and display.
+        
+        Args:
+            value: String to sanitize
+            escape_html_chars: If True, escape HTML (recommended)
             
         Returns:
             Sanitized string
@@ -246,109 +251,45 @@ class InputSanitizer:
         if not isinstance(value, str):
             return value
         
-        # Remove null bytes
+        # Remove null bytes (can cause issues in databases)
         value = value.replace("\x00", "")
         
-        # Escape HTML entities if not allowed
-        if not allow_html:
-            value = html.escape(value)
-        
-        # Remove control characters except newlines and tabs
+        # Remove other problematic control characters
+        # Keep: \n (newline), \t (tab), \r (carriage return)
         value = "".join(
             char for char in value
             if char.isprintable() or char in ["\n", "\t", "\r"]
         )
         
+        # Escape HTML if requested
+        if escape_html_chars:
+            value = InputSanitizer.escape_html(value)
+        
         return value.strip()
-    
-    @staticmethod
-    def sanitize_dict(data: Dict[str, Any], allow_html: bool = False) -> Dict[str, Any]:
-        """
-        Recursively sanitize all string values in a dictionary.
-        
-        Args:
-            data: Dictionary to sanitize
-            allow_html: If False, HTML entities will be escaped
-            
-        Returns:
-            Sanitized dictionary
-        """
-        if not isinstance(data, dict):
-            return data
-        
-        sanitized = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                sanitized[key] = InputSanitizer.sanitize_string(value, allow_html)
-            elif isinstance(value, dict):
-                sanitized[key] = InputSanitizer.sanitize_dict(value, allow_html)
-            elif isinstance(value, list):
-                sanitized[key] = [
-                    InputSanitizer.sanitize_string(item, allow_html) if isinstance(item, str)
-                    else InputSanitizer.sanitize_dict(item, allow_html) if isinstance(item, dict)
-                    else item
-                    for item in value
-                ]
-            else:
-                sanitized[key] = value
-        
-        return sanitized
-    
-    @staticmethod
-    def validate_email(email: str) -> bool:
-        """
-        Validate email format.
-        
-        Args:
-            email: Email address to validate
-            
-        Returns:
-            True if valid, False otherwise
-        """
-        email_pattern = re.compile(
-            r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        )
-        return bool(email_pattern.match(email))
-    
-    @staticmethod
-    def validate_username(username: str, min_length: int = 3, max_length: int = 50) -> bool:
-        """
-        Validate username format.
-        
-        Args:
-            username: Username to validate
-            min_length: Minimum length
-            max_length: Maximum length
-            
-        Returns:
-            True if valid, False otherwise
-        """
-        if not username or len(username) < min_length or len(username) > max_length:
-            return False
-        
-        # Allow alphanumeric, underscores, and hyphens
-        username_pattern = re.compile(r'^[a-zA-Z0-9_-]+$')
-        return bool(username_pattern.match(username))
     
     @staticmethod
     def sanitize_filename(filename: str) -> str:
         """
-        Sanitize a filename to prevent directory traversal and other attacks.
+        Sanitize a filename to prevent directory traversal.
         
         Args:
             filename: Filename to sanitize
             
         Returns:
-            Sanitized filename
+            Safe filename
         """
         # Remove path components
         filename = filename.split("/")[-1].split("\\")[-1]
         
-        # Remove dangerous characters
+        # Remove dangerous characters, keep alphanumeric, spaces, dots, hyphens, underscores
         filename = re.sub(r'[^\w\s.-]', '', filename)
         
         # Remove leading/trailing dots and spaces
         filename = filename.strip(". ")
+        
+        # Prevent hidden files
+        if filename.startswith("."):
+            filename = filename[1:]
         
         # Limit length
         max_filename_length = 255
@@ -356,16 +297,18 @@ class InputSanitizer:
             name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
             filename = name[:max_filename_length - len(ext) - 1] + "." + ext if ext else name[:max_filename_length]
         
-        return filename
+        return filename or "unnamed"
     
     @staticmethod
     def sanitize_url(url: str, allowed_schemes: list = None) -> Optional[str]:
         """
-        Sanitize and validate a URL.
+        Validate and sanitize a URL.
+        
+        Note: For serious URL validation, consider using the 'validators' library.
         
         Args:
-            url: URL to sanitize
-            allowed_schemes: List of allowed URL schemes (default: http, https)
+            url: URL to validate
+            allowed_schemes: List of allowed schemes (default: http, https)
             
         Returns:
             Sanitized URL or None if invalid
@@ -377,10 +320,10 @@ class InputSanitizer:
         
         # Basic URL validation
         url_pattern = re.compile(
-            r'^(https?|ftp)://'  # Scheme
-            r'([a-zA-Z0-9.-]+)'  # Domain
-            r'(:[0-9]+)?'  # Optional port
-            r'(/.*)?$',  # Optional path
+            r'^(https?|ftp)://'
+            r'([a-zA-Z0-9.-]+)'
+            r'(:[0-9]+)?'
+            r'(/.*)?$',
             re.IGNORECASE
         )
         
@@ -393,77 +336,100 @@ class InputSanitizer:
             return None
         
         return url
+
+
+class PydanticValidators:
+    """
+    Reusable Pydantic validators for common patterns.
+    
+    Use these in your Pydantic models:
+    
+    Example:
+        from pydantic import BaseModel, field_validator
+        
+        class UserInput(BaseModel):
+            username: str
+            bio: str
+            
+            @field_validator('username')
+            @classmethod
+            def validate_username(cls, v):
+                return PydanticValidators.username(v)
+            
+            @field_validator('bio')
+            @classmethod
+            def sanitize_bio(cls, v):
+                return PydanticValidators.safe_html(v)
+    """
     
     @staticmethod
-    def strip_dangerous_characters(value: str) -> str:
+    def username(value: str, min_length: int = 3, max_length: int = 50) -> str:
         """
-        Remove potentially dangerous characters from input.
+        Validate username format.
+        
+        Rules:
+        - Alphanumeric, underscores, hyphens only
+        - 3-50 characters
+        
+        Raises:
+            ValueError: If username is invalid
+        """
+        if not value or len(value) < min_length or len(value) > max_length:
+            raise ValueError(f"Username must be between {min_length} and {max_length} characters")
+        
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            raise ValueError("Username can only contain letters, numbers, underscores, and hyphens")
+        
+        return value.lower()  # Normalize to lowercase
+    
+    @staticmethod
+    def safe_html(value: str, allow_tags: list = None) -> str:
+        """
+        Sanitize HTML input using bleach.
+        
+        Default: strips all HTML tags.
         
         Args:
-            value: String to clean
-            
-        Returns:
-            Cleaned string
+            value: HTML to sanitize
+            allow_tags: List of allowed tags (default: strip all)
         """
-        # Remove null bytes
-        value = value.replace("\x00", "")
+        return InputSanitizer.sanitize_html(value, tags=allow_tags or [])
+    
+    @staticmethod
+    def safe_text(value: str) -> str:
+        """
+        Sanitize plain text (escapes HTML, removes control chars).
+        """
+        return InputSanitizer.sanitize_string(value, escape_html_chars=True)
+    
+    @staticmethod
+    def url(value: str, allowed_schemes: list = None) -> str:
+        """
+        Validate and sanitize URL.
         
-        # Remove other dangerous control characters
-        dangerous_chars = [
-            "\x08",  # Backspace
-            "\x1b",  # Escape
-            "\x7f",  # Delete
-        ]
-        
-        for char in dangerous_chars:
-            value = value.replace(char, "")
-        
-        return value
+        Raises:
+            ValueError: If URL is invalid
+        """
+        sanitized = InputSanitizer.sanitize_url(value, allowed_schemes)
+        if not sanitized:
+            raise ValueError("Invalid URL format")
+        return sanitized
 
 
-class CSRFProtectionMiddleware(BaseHTTPMiddleware):
-    """
-    CSRF (Cross-Site Request Forgery) protection middleware.
-    
-    Note: For API-only applications using JWT tokens, CSRF protection
-    is less critical but still recommended for state-changing operations.
-    """
-    
-    def __init__(self, app, exempt_paths: list = None):
-        super().__init__(app)
-        self.exempt_paths = exempt_paths or [
-            "/health",
-            "/docs",
-            "/redoc",
-            "/openapi.json"
-        ]
-    
-    async def dispatch(self, request: Request, call_next) -> Response:
-        """Check CSRF protection for state-changing requests."""
-        
-        # Skip CSRF check for safe methods
-        if request.method in ["GET", "HEAD", "OPTIONS"]:
-            return await call_next(request)
-        
-        # Skip for exempt paths
-        if any(request.url.path.startswith(path) for path in self.exempt_paths):
-            return await call_next(request)
-        
-        # For Bearer token authentication, verify Origin/Referer header
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            # Check Origin or Referer header
-            origin = request.headers.get("origin")
-            referer = request.headers.get("referer")
-            
-            if not origin and not referer:
-                logger.debug(
-                    f"CSRF check: No Origin/Referer header | "
-                    f"path={request.url.path} | "
-                    f"method={request.method}"
-                )
-        
-        # Process request
-        response = await call_next(request)
-        return response
-
+# Note: CSRF protection for JWT-based APIs
+# 
+# For APIs using Bearer tokens (JWT in Authorization header), CSRF protection
+# is generally not needed because:
+# 1. Tokens are not automatically sent by browsers (unlike cookies)
+# 2. Attackers cannot access the Authorization header from another domain
+# 3. SameSite cookies are not used
+#
+# However, if you use cookies for token storage, implement CSRF protection:
+# - Use the 'starlette-csrf' package
+# - Or implement Double Submit Cookie pattern
+# - Or use Synchronizer Token pattern
+#
+# For now, we rely on:
+# - Origin/Referer header validation (in security headers middleware)
+# - Content-Security-Policy headers
+# - CORS configuration
