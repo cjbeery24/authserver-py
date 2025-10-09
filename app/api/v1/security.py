@@ -10,7 +10,7 @@ import logging
 
 from app.core.database import get_db
 from app.core.redis import get_redis_dependency
-from app.core.security import TokenRotation, TokenBinding, TokenTransmissionSecurity
+from app.core.security import TokenRotation, TokenBinding, TokenSecurityManager
 from app.middleware import get_current_user_or_401
 from app.models.user import User
 from app.schemas.base import BaseModel
@@ -66,23 +66,25 @@ async def validate_token_transmission_security(
     
     Analyzes various security aspects of the current request and token
     to provide a comprehensive security assessment.
+    
+    Uses centralized TokenSecurityManager for consistent validation.
     """
     try:
-        # Get transmission security validation
-        validation_results = TokenTransmissionSecurity.validate_token_transmission_security(request)
+        # Get transmission security validation using centralized manager
+        validation_results = TokenSecurityManager.validate_transmission_security(request)
         
-        # Calculate security score
-        security_score = _calculate_security_score(validation_results, request)
+        # Calculate security score using centralized manager
+        security_score = TokenSecurityManager.calculate_security_score(validation_results, request)
         
-        # Generate recommendations
-        recommendations = _generate_security_recommendations(validation_results, request)
+        # Generate recommendations using centralized manager
+        recommendations = TokenSecurityManager.generate_security_recommendations(validation_results, request)
         
         # Check token binding if enabled
         binding_status = None
         if hasattr(request.state, 'token_data') and request.state.token_data:
             binding_status = {
                 "enabled": True,
-                "client_fingerprint": TokenTransmissionSecurity.get_client_fingerprint(request),
+                "client_fingerprint": TokenSecurityManager.get_client_fingerprint(request),
                 "status": "active"
             }
         
@@ -231,8 +233,8 @@ async def get_user_security_audit(
                 "user_agent": log.user_agent
             })
         
-        # Calculate risk score based on various factors
-        risk_score = _calculate_user_risk_score(current_user, active_tokens, security_events)
+        # Calculate risk score using centralized manager
+        risk_score = TokenSecurityManager.calculate_user_risk_score(current_user, active_tokens, security_events)
         
         # Get last activity
         last_activity = None
@@ -255,101 +257,6 @@ async def get_user_security_audit(
         )
 
 
-def _calculate_security_score(validation_results: Dict[str, bool], request: Request) -> int:
-    """Calculate overall security score based on validation results."""
-    score = 0
-    max_score = 100
-    
-    # HTTPS check (30 points)
-    if validation_results.get("is_https", False):
-        score += 30
-    
-    # Secure context (20 points)
-    if validation_results.get("is_secure_context", False):
-        score += 20
-    
-    # Valid content type (15 points)
-    if validation_results.get("content_type_valid", False):
-        score += 15
-    
-    # User agent present (10 points)
-    if validation_results.get("has_user_agent", False):
-        score += 10
-    
-    # Origin header present (10 points)
-    if validation_results.get("has_origin", False):
-        score += 10
-    
-    # Referer header present (10 points)
-    if validation_results.get("has_referer", False):
-        score += 10
-    
-    # Additional security headers check (5 points)
-    security_headers = ["X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP"]
-    if any(header in request.headers for header in security_headers):
-        score += 5
-    
-    return min(score, max_score)
-
-
-def _generate_security_recommendations(validation_results: Dict[str, bool], request: Request) -> list[str]:
-    """Generate security recommendations based on validation results."""
-    recommendations = []
-    
-    if not validation_results.get("is_https", False):
-        recommendations.append("Use HTTPS for all token transmission")
-    
-    if not validation_results.get("has_user_agent", False):
-        recommendations.append("Include proper User-Agent header in requests")
-    
-    if not validation_results.get("has_origin", False):
-        recommendations.append("Include Origin header for CORS validation")
-    
-    if not validation_results.get("content_type_valid", False):
-        recommendations.append("Use valid Content-Type headers (application/json, application/x-www-form-urlencoded)")
-    
-    if not validation_results.get("is_secure_context", False):
-        recommendations.append("Ensure requests are made from secure context (HTTPS environment)")
-    
-    # Add general recommendations
-    recommendations.append("Regularly rotate refresh tokens")
-    recommendations.append("Enable token binding for enhanced security")
-    recommendations.append("Monitor for unusual access patterns")
-    
-    return recommendations
-
-
-def _calculate_user_risk_score(user: User, active_tokens: int, security_events: list) -> int:
-    """Calculate risk score for a user based on various factors."""
-    risk_score = 0
-    
-    # Base risk (10 points)
-    risk_score += 10
-    
-    # Active tokens risk (more tokens = higher risk)
-    if active_tokens > 10:
-        risk_score += 20
-    elif active_tokens > 5:
-        risk_score += 10
-    
-    # Recent security events risk
-    failed_attempts = sum(1 for event in security_events if "failed" in event.get("action", "").lower())
-    if failed_attempts > 5:
-        risk_score += 30
-    elif failed_attempts > 2:
-        risk_score += 15
-    
-    # Account age (newer accounts have slightly higher risk)
-    from datetime import datetime, timezone, timedelta
-    if user.created_at > datetime.now(timezone.utc) - timedelta(days=7):
-        risk_score += 10
-    
-    # Different IP addresses in recent events
-    unique_ips = set(event.get("ip_address", "") for event in security_events if event.get("ip_address"))
-    if len(unique_ips) > 5:
-        risk_score += 15
-    elif len(unique_ips) > 3:
-        risk_score += 10
-    
-    return min(risk_score, 100)
+# Note: Security validation logic moved to TokenSecurityManager in app/core/security.py
+# This eliminates duplication and provides a centralized security validation API
 

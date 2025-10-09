@@ -1733,6 +1733,238 @@ class TokenBlacklist:
         logger.debug("Token blacklist cleanup completed (Redis handles expiration automatically)")
 
 
+class TokenSecurityManager:
+    """
+    Centralized token security validation and risk assessment.
+    
+    This class consolidates security validation logic for tokens,
+    providing reusable methods for:
+    - Token transmission security validation
+    - Security score calculation
+    - Security recommendations generation
+    - User risk assessment
+    """
+    
+    @staticmethod
+    def validate_transmission_security(request) -> Dict[str, bool]:
+        """
+        Validate security aspects of token transmission.
+        
+        Analyzes the request to check various security aspects like HTTPS,
+        headers, and secure context.
+        
+        Args:
+            request: FastAPI request object
+            
+        Returns:
+            Dictionary of security validation results
+            
+        Example:
+            results = TokenSecurityManager.validate_transmission_security(request)
+            if not results["is_https"]:
+                logger.warning("Token transmitted over HTTP!")
+        """
+        from app.middleware.security_headers import TokenTransmissionSecurity
+        return TokenTransmissionSecurity.validate_token_transmission_security(request)
+    
+    @staticmethod
+    def calculate_security_score(validation_results: Dict[str, bool], request) -> int:
+        """
+        Calculate overall security score based on validation results.
+        
+        Score ranges from 0-100:
+        - 80-100: Excellent security
+        - 60-79: Good security
+        - 40-59: Moderate security
+        - 0-39: Poor security
+        
+        Args:
+            validation_results: Results from validate_transmission_security()
+            request: FastAPI request object for additional checks
+            
+        Returns:
+            Security score (0-100)
+            
+        Example:
+            results = TokenSecurityManager.validate_transmission_security(request)
+            score = TokenSecurityManager.calculate_security_score(results, request)
+            if score < 60:
+                logger.warning(f"Low security score: {score}")
+        """
+        score = 0
+        
+        # HTTPS check (30 points) - Most important
+        if validation_results.get("is_https", False):
+            score += 30
+        
+        # Secure context (20 points)
+        if validation_results.get("is_secure_context", False):
+            score += 20
+        
+        # Valid content type (15 points)
+        if validation_results.get("content_type_valid", False):
+            score += 15
+        
+        # User agent present (10 points)
+        if validation_results.get("has_user_agent", False):
+            score += 10
+        
+        # Origin header present (10 points)
+        if validation_results.get("has_origin", False):
+            score += 10
+        
+        # Referer header present (10 points)
+        if validation_results.get("has_referer", False):
+            score += 10
+        
+        # Additional security headers (5 points)
+        security_headers = ["X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP"]
+        if any(header in request.headers for header in security_headers):
+            score += 5
+        
+        return min(score, 100)
+    
+    @staticmethod
+    def generate_security_recommendations(
+        validation_results: Dict[str, bool], 
+        request
+    ) -> list[str]:
+        """
+        Generate security recommendations based on validation results.
+        
+        Args:
+            validation_results: Results from validate_transmission_security()
+            request: FastAPI request object
+            
+        Returns:
+            List of security recommendations
+            
+        Example:
+            results = TokenSecurityManager.validate_transmission_security(request)
+            recommendations = TokenSecurityManager.generate_security_recommendations(results, request)
+            for rec in recommendations:
+                logger.info(f"Security recommendation: {rec}")
+        """
+        recommendations = []
+        
+        # Critical recommendations
+        if not validation_results.get("is_https", False):
+            recommendations.append("⚠️ CRITICAL: Use HTTPS for all token transmission")
+        
+        # Important recommendations
+        if not validation_results.get("has_user_agent", False):
+            recommendations.append("Include proper User-Agent header in requests")
+        
+        if not validation_results.get("has_origin", False):
+            recommendations.append("Include Origin header for CORS validation")
+        
+        if not validation_results.get("content_type_valid", False):
+            recommendations.append("Use valid Content-Type headers (application/json, application/x-www-form-urlencoded)")
+        
+        if not validation_results.get("is_secure_context", False):
+            recommendations.append("Ensure requests are made from secure context (HTTPS environment)")
+        
+        # General best practices (always show)
+        recommendations.extend([
+            "Regularly rotate refresh tokens",
+            "Enable token binding for enhanced security",
+            "Monitor for unusual access patterns",
+            "Use short-lived access tokens"
+        ])
+        
+        return recommendations
+    
+    @staticmethod
+    def calculate_user_risk_score(user, active_tokens: int, security_events: list) -> int:
+        """
+        Calculate risk score for a user based on various factors.
+        
+        Score ranges from 0-100:
+        - 0-30: Low risk
+        - 31-60: Moderate risk
+        - 61-80: High risk
+        - 81-100: Very high risk
+        
+        Args:
+            user: User object
+            active_tokens: Number of active tokens
+            security_events: List of recent security events
+            
+        Returns:
+            Risk score (0-100)
+            
+        Example:
+            risk = TokenSecurityManager.calculate_user_risk_score(
+                user, active_tokens=15, security_events=events
+            )
+            if risk > 60:
+                # Trigger additional security measures
+        """
+        risk_score = 0
+        
+        # Base risk (10 points)
+        risk_score += 10
+        
+        # Active tokens risk (more tokens = higher risk)
+        if active_tokens > 10:
+            risk_score += 20
+        elif active_tokens > 5:
+            risk_score += 10
+        
+        # Recent security events risk
+        failed_attempts = sum(
+            1 for event in security_events 
+            if "failed" in event.get("action", "").lower() or 
+               not event.get("success", True)
+        )
+        if failed_attempts > 5:
+            risk_score += 30
+        elif failed_attempts > 2:
+            risk_score += 15
+        
+        # Account age (newer accounts have slightly higher risk)
+        from datetime import datetime, timezone, timedelta
+        if hasattr(user, 'created_at') and user.created_at:
+            if user.created_at > datetime.now(timezone.utc) - timedelta(days=7):
+                risk_score += 10
+        
+        # Different IP addresses in recent events (account sharing or compromise)
+        unique_ips = set(
+            event.get("ip_address", "") 
+            for event in security_events 
+            if event.get("ip_address")
+        )
+        if len(unique_ips) > 5:
+            risk_score += 15
+        elif len(unique_ips) > 3:
+            risk_score += 10
+        
+        # Suspicious activities
+        suspicious_actions = ["mfa_disable", "password_change", "role_change"]
+        suspicious_count = sum(
+            1 for event in security_events
+            if any(action in event.get("action", "").lower() for action in suspicious_actions)
+        )
+        if suspicious_count > 3:
+            risk_score += 10
+        
+        return min(risk_score, 100)
+    
+    @staticmethod
+    def get_client_fingerprint(request) -> str:
+        """
+        Generate a client fingerprint for token binding.
+        
+        Args:
+            request: FastAPI request object
+            
+        Returns:
+            SHA-256 hash of client characteristics
+        """
+        from app.middleware.security_headers import TokenTransmissionSecurity
+        return TokenTransmissionSecurity.get_client_fingerprint(request)
+
+
 class AuthenticationManager:
     """
     Centralized authentication logic for user login and verification.
