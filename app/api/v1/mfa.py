@@ -14,6 +14,7 @@ import io
 import base64
 
 from app.core.database import get_db
+from app.core.redis import get_redis_dependency
 from app.core.config import settings
 from app.core.security import MFAHandler, SecureTokenHasher
 from app.core.errors import AuthError
@@ -384,7 +385,8 @@ class MFABypassResponse(BaseModel):
 async def create_admin_mfa_bypass(
     bypass_request: MFABypassRequest,
     current_user: User = Depends(get_current_user_or_401),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Create an emergency MFA bypass token for a user (admin only).
@@ -427,10 +429,7 @@ async def create_admin_mfa_bypass(
     from app.core.security import TokenGenerator
     bypass_token = TokenGenerator.generate_secure_token(length=48)
     
-    # Store bypass token in Redis with expiration
-    from app.core.redis import get_redis
-    redis_client = await get_redis()
-    
+    # Store bypass token in Redis with expiration (redis_client injected via Depends)
     bypass_key = f"mfa_bypass:{bypass_request.user_id}:{SecureTokenHasher.hash_token(bypass_token)[:16]}"
     expiry_seconds = bypass_request.duration_hours * 3600
     
@@ -483,7 +482,8 @@ async def create_admin_mfa_bypass(
 async def validate_mfa_bypass(
     bypass_token: str = Field(..., description="MFA bypass token"),
     user_id: int = Field(..., description="User ID"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Validate an MFA bypass token.
@@ -491,10 +491,7 @@ async def validate_mfa_bypass(
     This is used internally during authentication when a user provides
     a bypass token instead of an MFA code.
     """
-    from app.core.redis import get_redis
-    redis_client = await get_redis()
-    
-    # Check if bypass token exists in Redis
+    # Check if bypass token exists in Redis (redis_client injected via Depends)
     bypass_key = f"mfa_bypass:{user_id}:{SecureTokenHasher.hash_token(bypass_token)[:16]}"
     bypass_data = await redis_client.get(bypass_key)
     
@@ -549,7 +546,8 @@ class MFARecoveryResponse(BaseModel):
 async def request_mfa_recovery(
     recovery_request: MFARecoveryRequest,
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Request MFA recovery when user loses access to their MFA device.
@@ -590,10 +588,7 @@ async def request_mfa_recovery(
     from app.core.security import TokenGenerator
     recovery_token = TokenGenerator.generate_secure_token(length=48)
     
-    # Store recovery token in Redis (24 hour expiration)
-    from app.core.redis import get_redis
-    redis_client = await get_redis()
-    
+    # Store recovery token in Redis (24 hour expiration, redis_client injected via Depends)
     recovery_key = f"mfa_recovery:{user.id}:{SecureTokenHasher.hash_token(recovery_token)[:16]}"
     recovery_data = json.dumps({
         "user_id": user.id,
@@ -628,7 +623,8 @@ class MFARecoveryCompleteRequest(BaseModel):
 @router.post("/recovery/complete")
 async def complete_mfa_recovery(
     recovery_request: MFARecoveryCompleteRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    redis_client = Depends(get_redis_dependency)
 ):
     """
     Complete MFA recovery using recovery token.
@@ -638,10 +634,9 @@ async def complete_mfa_recovery(
     - reset: Generate new secret and backup codes
     """
     from app.core.security import PasswordHasher
-    from app.core.redis import get_redis
-    redis_client = await get_redis()
     
     # Validate recovery token (check all users since we don't know which user)
+    # redis_client injected via Depends
     recovery_token_hash = SecureTokenHasher.hash_token(recovery_request.recovery_token)[:16]
     
     # Find the recovery token in Redis
