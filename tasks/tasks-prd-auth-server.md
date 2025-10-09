@@ -20,9 +20,10 @@
 - `app/api/oauth.py` - Unit tests for OAuth endpoints
 - `app/api/users.py` - User management endpoints (profile, MFA, account management)
 - `app/api/users.py` - Unit tests for user management endpoints
-- `app/api/admin.py` - Administrative endpoints (role management, user administration)
+- `app/api/v1/admin.py` - Administrative endpoints (role management, user administration, RBAC)
 - `app/api/admin.py` - Unit tests for admin endpoints
 - `app/core/` - Core business logic and utilities
+- `app/core/rbac.py` - Role-based access control implementation with permission checking logic
 - `app/core/auth.py` - Authentication logic and JWT token handling
 - `app/core/auth.py` - Unit tests for authentication logic
 - `app/core/oauth.py` - OAuth 2.0 and OpenID Connect implementation
@@ -126,17 +127,17 @@
   - [x] 4.11 Add OpenID Connect ID token generation and validation
   - [x] 4.12 Implement secure token storage and transmission mechanisms
 
-- [ ] 5.0 User Management and RBAC
+- [x] 5.0 User Management and RBAC
 
-  - [ ] 5.1 Create user profile CRUD operations (view, update, delete)
-  - [ ] 5.2 Implement role creation, modification, and deletion endpoints
-  - [ ] 5.3 Create permission management endpoints for administrators
-  - [ ] 5.4 Implement user-role assignment and removal functionality
-  - [ ] 5.5 Create role-permission assignment endpoints
-  - [ ] 5.6 Implement permission checking logic for resource-level and action-level granularity
-  - [ ] 5.7 Create user account deactivation and deletion endpoints
-  - [ ] 5.8 Implement audit logging for all user management operations
-  - [ ] 5.9 Create administrative dashboard endpoints for user and role management
+  - [x] 5.1 Create user profile CRUD operations (view, update, delete)
+  - [x] 5.2 Implement role creation, modification, and deletion endpoints
+  - [x] 5.3 Create permission management endpoints for administrators
+  - [x] 5.4 Implement user-role assignment and removal functionality
+  - [x] 5.5 Create role-permission assignment endpoints
+  - [x] 5.6 Implement permission checking logic for resource-level and action-level granularity
+  - [x] 5.7 Create user account deactivation and deletion endpoints
+  - [x] 5.8 Implement audit logging for all user management operations
+  - [x] 5.9 Create administrative dashboard endpoints for user and role management
 
 - [x] 6.0 Multi-Factor Authentication
 
