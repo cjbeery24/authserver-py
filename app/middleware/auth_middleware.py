@@ -1,9 +1,12 @@
 """
 Authentication middleware for JWT token validation and user context management.
+
+Uses dependency injection for Redis and database connections to improve
+testability and reduce coupling.
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Callable
 from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -24,11 +27,26 @@ class AuthMiddleware(BaseHTTPMiddleware):
     - Automatic JWT token validation
     - Token blacklist checking
     - User context management
-    - Optional token refresh
+    - Dependency injection for testability
     - Configurable protected paths
     """
 
-    def __init__(self, app, exclude_paths: Optional[list] = None):
+    def __init__(
+        self, 
+        app, 
+        exclude_paths: Optional[list] = None,
+        redis_getter: Optional[Callable] = None,
+        db_getter: Optional[Callable] = None
+    ):
+        """
+        Initialize AuthMiddleware with dependency injection.
+        
+        Args:
+            app: FastAPI application
+            exclude_paths: Paths to skip authentication
+            redis_getter: Callable that returns Redis client (for testing)
+            db_getter: Callable that returns database session (for testing)
+        """
         super().__init__(app)
         self.exclude_paths = exclude_paths or [
             "/", "/health", "/docs", "/redoc", "/openapi.json",
@@ -37,34 +55,66 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/v1/auth/token/mfa",
             "/api/v1/auth/password-reset/request",
             "/api/v1/auth/password-reset/confirm",
+            "/oauth/token",
+            "/.well-known/openid-configuration"
         ]
+        
+        # Dependency injection for testability
+        # Default to actual implementations, but can be mocked for testing
+        if redis_getter is None:
+            from app.core.redis import get_redis
+            self.redis_getter = get_redis
+        else:
+            self.redis_getter = redis_getter
+        
+        if db_getter is None:
+            from app.core.database import get_db
+            self.db_getter = db_getter
+        else:
+            self.db_getter = db_getter
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """
         Process each request through authentication middleware.
+        
+        Uses dependency injection for Redis and database connections.
         """
         # Skip authentication for excluded paths
         if self._should_skip_auth(request.url.path):
             return await call_next(request)
 
-        # Extract and validate token using shared utility
-        user_context = await TokenUtils.extract_and_validate(request, required=True)
+        # Get dependencies (allows for mocking in tests)
+        redis_client = await self.redis_getter()
+        db_session = next(self.db_getter())
         
-        if not user_context:
-            return await self._unauthorized_response("Missing or invalid authentication token")
+        try:
+            # Extract and validate token using shared utility with injected deps
+            user_context = await TokenUtils.extract_and_validate(
+                request, 
+                redis_client,
+                db_session,
+                required=True
+            )
+            
+            if not user_context:
+                return await self._unauthorized_response("Missing or invalid authentication token")
 
-        # Add user context to request state
-        request.state.user = user_context["user"]
-        request.state.token_data = user_context["token_data"]
-        
-        # Store raw token for blacklisting (extract again since we need the string)
-        raw_token = await TokenUtils.extract_token(request)
-        request.state.raw_token = raw_token
+            # Add user context to request state
+            request.state.user = user_context["user"]
+            request.state.token_data = user_context["token_data"]
+            
+            # Store raw token for blacklisting
+            raw_token = await TokenUtils.extract_token(request)
+            request.state.raw_token = raw_token
 
-        # Process the request
-        response = await call_next(request)
+            # Process the request
+            response = await call_next(request)
 
-        return response
+            return response
+            
+        finally:
+            # Ensure database session is closed
+            db_session.close()
 
     def _should_skip_auth(self, path: str) -> bool:
         """Check if the path should skip authentication."""
@@ -97,16 +147,58 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
 
     Adds user context if token is present and valid,
     but doesn't block requests without authentication.
+    
+    Uses dependency injection for testability.
     """
 
-    def __init__(self, app):
+    def __init__(
+        self, 
+        app,
+        redis_getter: Optional[Callable] = None,
+        db_getter: Optional[Callable] = None
+    ):
+        """
+        Initialize OptionalAuthMiddleware with dependency injection.
+        
+        Args:
+            app: FastAPI application
+            redis_getter: Callable that returns Redis client (for testing)
+            db_getter: Callable that returns database session (for testing)
+        """
         super().__init__(app)
+        
+        # Dependency injection for testability
+        if redis_getter is None:
+            from app.core.redis import get_redis
+            self.redis_getter = get_redis
+        else:
+            self.redis_getter = redis_getter
+        
+        if db_getter is None:
+            from app.core.database import get_db
+            self.db_getter = db_getter
+        else:
+            self.db_getter = db_getter
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Process request with optional authentication."""
+        """
+        Process request with optional authentication.
+        
+        Uses dependency injection for Redis and database connections.
+        """
+        db_session = None
         try:
+            # Get dependencies (allows for mocking in tests)
+            redis_client = await self.redis_getter()
+            db_session = next(self.db_getter())
+            
             # Try to extract and validate token using shared utility
-            user_context = await TokenUtils.extract_and_validate(request, required=False)
+            user_context = await TokenUtils.extract_and_validate(
+                request,
+                redis_client,
+                db_session,
+                required=False
+            )
             
             if user_context:
                 request.state.user = user_context["user"]
@@ -120,6 +212,10 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.debug(f"Optional auth failed: {str(e)}")
             # Don't fail the request for optional auth
+        finally:
+            # Ensure database session is closed
+            if db_session:
+                db_session.close()
 
         return await call_next(request)
 

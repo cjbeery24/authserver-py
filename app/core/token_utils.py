@@ -3,17 +3,17 @@ JWT token utility functions for extraction and validation.
 
 This module provides reusable utilities for handling JWT tokens
 across middleware and endpoints, eliminating code duplication.
+
+Uses dependency injection for better testability and flexibility.
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from fastapi import Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.core.security import TokenManager
-from app.core.redis import get_redis
-from app.core.database import get_db
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -74,10 +74,14 @@ class TokenUtils:
     async def validate_and_get_user(
         request: Request, 
         token: str,
+        redis_client,
+        db_session: Session,
         token_type: str = "access"
     ) -> Optional[Dict[str, Any]]:
         """
         Validate JWT token and return user context.
+        
+        This method uses dependency injection for better testability.
         
         This method:
         1. Validates the token signature and expiration
@@ -88,6 +92,8 @@ class TokenUtils:
         Args:
             request: FastAPI request object
             token: JWT token string
+            redis_client: Redis client instance (injected)
+            db_session: SQLAlchemy database session (injected)
             token_type: Token type ("access" or "refresh")
             
         Returns:
@@ -106,15 +112,19 @@ class TokenUtils:
             }
             
         Example:
-            user_context = await TokenUtils.validate_and_get_user(request, token)
+            from app.core.redis import get_redis
+            from app.core.database import get_db
+            
+            redis_client = await get_redis()
+            db = next(get_db())
+            user_context = await TokenUtils.validate_and_get_user(
+                request, token, redis_client, db
+            )
             if user_context:
                 user = user_context["user"]
                 token_data = user_context["token_data"]
         """
         try:
-            # Get Redis client for token validation and blacklist checking
-            redis_client = await get_redis()
-            
             # Validate token signature, expiration, and check blacklist
             payload = await TokenManager.verify_token(token, token_type, redis_client)
             if not payload:
@@ -125,14 +135,11 @@ class TokenUtils:
                 )
                 return None
             
-            # Get database session
-            db = next(get_db())
-            
             # Extract user ID from token
             user_id = int(payload.get("sub"))
             
             # Fetch user from database and verify they're active
-            user = db.query(User).filter(
+            user = db_session.query(User).filter(
                 User.id == user_id,
                 User.is_active == True
             ).first()
@@ -181,31 +188,43 @@ class TokenUtils:
     @staticmethod
     async def extract_and_validate(
         request: Request,
+        redis_client,
+        db_session: Session,
         token_type: str = "access",
         required: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         Convenience method that combines token extraction and validation.
         
+        Uses dependency injection for Redis and database connections.
+        
         Args:
             request: FastAPI request object
+            redis_client: Redis client instance (injected)
+            db_session: SQLAlchemy database session (injected)
             token_type: Token type ("access" or "refresh")
-            required: If True, returns None when token missing/invalid
-                     If False, logs but doesn't fail
+            required: If True, logs when token missing/invalid
+                     If False, silently returns None
             
         Returns:
             User context dict or None
             
         Example:
+            from app.core.redis import get_redis
+            from app.core.database import get_db
+            
             # For required authentication
-            user_context = await TokenUtils.extract_and_validate(request)
+            redis_client = await get_redis()
+            db = next(get_db())
+            user_context = await TokenUtils.extract_and_validate(
+                request, redis_client, db
+            )
             if not user_context:
                 raise HTTPException(401, "Authentication required")
             
             # For optional authentication
             user_context = await TokenUtils.extract_and_validate(
-                request, 
-                required=False
+                request, redis_client, db, required=False
             )
             # user_context might be None, that's OK
         """
@@ -217,8 +236,10 @@ class TokenUtils:
                 logger.debug(f"No token found in request to {request.url.path}")
             return None
         
-        # Validate token and get user
-        user_context = await TokenUtils.validate_and_get_user(request, token, token_type)
+        # Validate token and get user (with injected dependencies)
+        user_context = await TokenUtils.validate_and_get_user(
+            request, token, redis_client, db_session, token_type
+        )
         
         if not user_context and required:
             logger.debug(f"Token validation failed for {request.url.path}")
