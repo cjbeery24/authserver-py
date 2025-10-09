@@ -123,13 +123,17 @@ app.add_middleware(SecurityHeadersMiddleware)
 logger.info("Security headers middleware enabled")
 
 # Add request/response logging middleware
+# Note: Always enabled to add timing headers, but logging is conditional
+app.add_middleware(
+    RequestResponseLoggingMiddleware,
+    log_request_body=settings.debug,
+    log_response_body=False,
+    enable_logging=settings.debug or settings.app_env in ["development", "staging"]
+)
 if settings.debug or settings.app_env in ["development", "staging"]:
-    app.add_middleware(
-        RequestResponseLoggingMiddleware,
-        log_request_body=settings.debug,
-        log_response_body=False
-    )
-    logger.info("Request/response logging middleware enabled")
+    logger.info("Request/response logging middleware enabled (with logging)")
+else:
+    logger.info("Request timing middleware enabled (logging disabled)")
 
 # Add trusted host middleware for security
 app.add_middleware(
@@ -142,14 +146,8 @@ if settings.auth_middleware_enabled:
     app.add_middleware(AuthMiddleware)
     logger.info("Authentication middleware enabled")
 
-# Request timing middleware
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
-    return response
+# Note: Request timing is handled by RequestResponseLoggingMiddleware
+# No need for separate timing middleware
 
 # Global exception handler
 @app.exception_handler(Exception)

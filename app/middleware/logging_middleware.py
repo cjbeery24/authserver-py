@@ -26,6 +26,7 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
     - Configurable log levels
     - Sensitive data filtering
     - Performance metrics
+    - Always adds timing headers (even when logging is disabled)
     """
     
     def __init__(
@@ -33,12 +34,14 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
         app,
         log_request_body: bool = False,
         log_response_body: bool = False,
+        enable_logging: bool = True,
         sensitive_headers: list = None,
         max_body_log_size: int = 1024
     ):
         super().__init__(app)
         self.log_request_body = log_request_body
         self.log_response_body = log_response_body
+        self.enable_logging = enable_logging
         self.max_body_log_size = max_body_log_size
         self.sensitive_headers = sensitive_headers or [
             "authorization",
@@ -49,18 +52,23 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
         ]
     
     async def dispatch(self, request: Request, call_next: Callable) -> StarletteResponse:
-        """Process request and log details."""
+        """
+        Process request and optionally log details.
+        
+        Always adds timing and request ID headers, but logging is optional.
+        """
         start_time = time.time()
         
         # Generate request ID
         request_id = self._generate_request_id()
         
-        # Log request
-        await self._log_request(request, request_id)
+        # Log request (only if logging enabled)
+        if self.enable_logging:
+            await self._log_request(request, request_id)
         
         # Store request body for potential error logging
         request_body = None
-        if self.log_request_body:
+        if self.log_request_body and self.enable_logging:
             request_body = await self._get_request_body(request)
         
         # Process request
@@ -68,10 +76,11 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             process_time = time.time() - start_time
             
-            # Log response
-            await self._log_response(request, response, process_time, request_id)
+            # Log response (only if logging enabled)
+            if self.enable_logging:
+                await self._log_response(request, response, process_time, request_id)
             
-            # Add request ID and timing headers
+            # Always add request ID and timing headers (minimal overhead)
             response.headers["X-Request-ID"] = request_id
             response.headers["X-Process-Time"] = str(process_time)
             
@@ -80,7 +89,7 @@ class RequestResponseLoggingMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             process_time = time.time() - start_time
             
-            # Log error
+            # Always log errors, regardless of logging settings
             logger.error(
                 f"Request failed | "
                 f"request_id={request_id} | "
