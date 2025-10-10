@@ -8,9 +8,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
 import logging
+import asyncio
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.rbac import PermissionChecker
 from app.models.user import User
 from app.models.role import Role
 from app.models.permission import Permission
@@ -223,8 +225,6 @@ async def _require_admin(current_user: User = Depends(get_current_user_or_401), 
     
     Checks if the user has the 'admin' role or 'admin:access' permission.
     """
-    from app.core.rbac import PermissionChecker
-    
     # Check if user has admin role or admin:access permission
     has_admin_role = PermissionChecker.has_role(current_user.id, "admin", db)
     has_admin_permission = PermissionChecker.has_permission(current_user.id, "admin", "access", db)
@@ -792,6 +792,10 @@ async def assign_role_to_user(
         )
         db.commit()
         
+        # Invalidate cache for this user
+        from app.core.cache import RBACCache
+        asyncio.run(RBACCache.invalidate_user(assignment.user_id))
+        
         logger.info(f"Role '{role.name}' assigned to user {user.username} by admin {current_user.id}")
         
         return {
@@ -876,6 +880,10 @@ async def remove_role_from_user(
         )
         db.commit()
         
+        # Invalidate cache for this user
+        from app.core.cache import RBACCache
+        asyncio.run(RBACCache.invalidate_user(assignment.user_id))
+        
         logger.info(f"Role '{role.name}' removed from user {user.username} by admin {current_user.id}")
         
         return {
@@ -912,11 +920,8 @@ async def get_user_roles(
             detail=f"User with ID {user_id} not found"
         )
     
-    # Get user's roles
-    user_roles = db.query(UserRole).filter(UserRole.user_id == user_id).all()
-    role_ids = [ur.role_id for ur in user_roles]
-    
-    roles = db.query(Role).filter(Role.id.in_(role_ids)).all() if role_ids else []
+    # Use PermissionChecker to get roles (benefits from caching)
+    roles = PermissionChecker.get_user_roles(user_id, db)
     
     return [
         RoleResponse(
@@ -1004,6 +1009,10 @@ async def assign_permission_to_role(
         )
         db.commit()
         
+        # Invalidate cache for this role
+        from app.core.cache import RBACCache
+        asyncio.run(RBACCache.invalidate_role(assignment.role_id))
+        
         logger.info(f"Permission '{permission.permission_string}' assigned to role '{role.name}' by admin {current_user.id}")
         
         return {
@@ -1087,6 +1096,10 @@ async def remove_permission_from_role(
         )
         db.commit()
         
+        # Invalidate cache for this role
+        from app.core.cache import RBACCache
+        asyncio.run(RBACCache.invalidate_role(assignment.role_id))
+        
         logger.info(f"Permission '{permission.permission_string}' removed from role '{role.name}' by admin {current_user.id}")
         
         return {
@@ -1123,11 +1136,8 @@ async def get_role_permissions(
             detail=f"Role with ID {role_id} not found"
         )
     
-    # Get role's permissions
-    role_permissions = db.query(RolePermission).filter(RolePermission.role_id == role_id).all()
-    permission_ids = [rp.permission_id for rp in role_permissions]
-    
-    permissions = db.query(Permission).filter(Permission.id.in_(permission_ids)).all() if permission_ids else []
+    # Use PermissionChecker to get role permissions (benefits from caching)
+    permissions = PermissionChecker.get_role_permissions(role_id, db)
     
     return [
         PermissionResponse(
@@ -1166,10 +1176,8 @@ async def list_users(
     
     user_responses = []
     for user in users:
-        # Get user's roles
-        user_roles = db.query(UserRole).filter(UserRole.user_id == user.id).all()
-        role_ids = [ur.role_id for ur in user_roles]
-        roles = db.query(Role).filter(Role.id.in_(role_ids)).all() if role_ids else []
+        # Use PermissionChecker to get roles (benefits from caching)
+        roles = PermissionChecker.get_user_roles(user.id, db)
         role_names = [role.name for role in roles]
         
         user_responses.append(AdminUserResponse(
@@ -1203,10 +1211,8 @@ async def get_user_details(
             detail=f"User with ID {user_id} not found"
         )
     
-    # Get user's roles
-    user_roles = db.query(UserRole).filter(UserRole.user_id == user.id).all()
-    role_ids = [ur.role_id for ur in user_roles]
-    roles = db.query(Role).filter(Role.id.in_(role_ids)).all() if role_ids else []
+    # Use PermissionChecker to get roles (benefits from caching)
+    roles = PermissionChecker.get_user_roles(user.id, db)
     role_names = [role.name for role in roles]
     
     return AdminUserResponse(

@@ -1,13 +1,15 @@
 """
-Role-Based Access Control (RBAC) implementation.
+Role-Based Access Control (RBAC) implementation with Redis caching.
 
 This module provides permission checking logic with resource-level and action-level granularity.
+Frequently accessed permissions are cached in Redis for improved performance.
 """
 
 from typing import List, Optional, Set
 from sqlalchemy.orm import Session
 from fastapi import Depends, HTTPException, status
 import logging
+import asyncio
 
 from app.models.user import User
 from app.models.role import Role
@@ -16,6 +18,7 @@ from app.models.user_role import UserRole
 from app.models.role_permission import RolePermission
 from app.core.database import get_db
 from app.middleware import get_current_user_or_401
+from app.core.cache import RBACCache
 
 logger = logging.getLogger(__name__)
 
@@ -28,65 +31,119 @@ class PermissionChecker:
     """
     
     @staticmethod
-    def get_user_roles(user_id: int, db: Session) -> List[Role]:
+    def get_user_roles(user_id: int, db: Session, use_cache: bool = True) -> List[Role]:
         """
-        Get all roles assigned to a user.
+        Get all roles assigned to a user (with optional caching).
         
         Args:
             user_id: The user's ID
             db: Database session
+            use_cache: Whether to use Redis cache (default: True)
             
         Returns:
             List of Role objects
         """
-        user_roles = db.query(UserRole).filter(UserRole.user_id == user_id).all()
-        role_ids = [ur.role_id for ur in user_roles]
+        # Try cache first if enabled
+        if use_cache:
+            try:
+                cached_roles = asyncio.run(RBACCache.get_user_roles(user_id))
+                if cached_roles is not None:
+                    # Convert cached dicts back to Role objects
+                    return [Role(id=r['id'], name=r['name'], description=r.get('description')) 
+                            for r in cached_roles]
+            except Exception as e:
+                logger.warning(f"Cache lookup failed for user roles, falling back to database: {e}")
         
-        if not role_ids:
-            return []
+        # Fetch from database using a single JOIN query
+        roles = db.query(Role).join(
+            UserRole, Role.id == UserRole.role_id
+        ).filter(
+            UserRole.user_id == user_id
+        ).all()
         
-        roles = db.query(Role).filter(Role.id.in_(role_ids)).all()
+        # Cache the result if caching is enabled
+        if use_cache and roles:
+            try:
+                roles_data = [{'id': r.id, 'name': r.name, 'description': r.description} 
+                             for r in roles]
+                asyncio.run(RBACCache.set_user_roles(user_id, roles_data))
+            except Exception as e:
+                logger.warning(f"Failed to cache user roles: {e}")
+        
         return roles
     
     @staticmethod
-    def get_role_permissions(role_id: int, db: Session) -> List[Permission]:
+    def get_role_permissions(role_id: int, db: Session, use_cache: bool = True) -> List[Permission]:
         """
-        Get all permissions assigned to a role.
+        Get all permissions assigned to a role (with optional caching).
         
         Args:
             role_id: The role's ID
             db: Database session
+            use_cache: Whether to use Redis cache (default: True)
             
         Returns:
             List of Permission objects
         """
-        role_permissions = db.query(RolePermission).filter(
+        # Try cache first if enabled
+        if use_cache:
+            try:
+                cached_perms = asyncio.run(RBACCache.get_role_permissions(role_id))
+                if cached_perms is not None:
+                    # Convert cached permission dicts back to Permission objects (no DB query!)
+                    return [Permission(
+                        id=p['id'], 
+                        resource=p['resource'], 
+                        action=p['action']
+                    ) for p in cached_perms]
+            except Exception as e:
+                logger.warning(f"Cache lookup failed for role permissions, falling back to database: {e}")
+        
+        # Fetch from database using a single JOIN query
+        permissions = db.query(Permission).join(
+            RolePermission, Permission.id == RolePermission.permission_id
+        ).filter(
             RolePermission.role_id == role_id
         ).all()
-        permission_ids = [rp.permission_id for rp in role_permissions]
         
-        if not permission_ids:
-            return []
+        # Cache the result if caching is enabled
+        if use_cache and permissions:
+            try:
+                perms_data = [{
+                    'id': perm.id,
+                    'resource': perm.resource,
+                    'action': perm.action
+                } for perm in permissions]
+                asyncio.run(RBACCache.set_role_permissions(role_id, perms_data))
+            except Exception as e:
+                logger.warning(f"Failed to cache role permissions: {e}")
         
-        permissions = db.query(Permission).filter(
-            Permission.id.in_(permission_ids)
-        ).all()
         return permissions
     
     @staticmethod
-    def get_user_permissions(user_id: int, db: Session) -> Set[str]:
+    def get_user_permissions(user_id: int, db: Session, use_cache: bool = True) -> Set[str]:
         """
-        Get all permissions for a user (from all their roles).
+        Get all permissions for a user (from all their roles) with caching.
         
         Args:
             user_id: The user's ID
             db: Database session
+            use_cache: Whether to use Redis cache (default: True)
             
         Returns:
             Set of permission strings in format "resource:action"
         """
+        # Try cache first if enabled
+        if use_cache:
+            try:
+                cached_perms = asyncio.run(RBACCache.get_user_permissions(user_id))
+                if cached_perms is not None:
+                    return cached_perms
+            except Exception as e:
+                logger.warning(f"Cache lookup failed for user permissions, falling back to database: {e}")
+        
         # Get user's roles
-        roles = PermissionChecker.get_user_roles(user_id, db)
+        roles = PermissionChecker.get_user_roles(user_id, db, use_cache=use_cache)
         
         if not roles:
             return set()
@@ -94,28 +151,47 @@ class PermissionChecker:
         # Get all permissions from all roles
         all_permissions = set()
         for role in roles:
-            permissions = PermissionChecker.get_role_permissions(role.id, db)
+            permissions = PermissionChecker.get_role_permissions(role.id, db, use_cache=use_cache)
             for perm in permissions:
                 all_permissions.add(perm.permission_string)
+        
+        # Cache the result if caching is enabled
+        if use_cache and all_permissions:
+            try:
+                asyncio.run(RBACCache.set_user_permissions(user_id, all_permissions))
+            except Exception as e:
+                logger.warning(f"Failed to cache user permissions: {e}")
         
         return all_permissions
     
     @staticmethod
-    def has_permission(user_id: int, resource: str, action: str, db: Session) -> bool:
+    def has_permission(user_id: int, resource: str, action: str, db: Session, use_cache: bool = True) -> bool:
         """
-        Check if a user has a specific permission.
+        Check if a user has a specific permission (with caching).
         
         Args:
             user_id: The user's ID
             resource: The resource name (e.g., "users", "roles")
             action: The action name (e.g., "create", "read", "update", "delete")
             db: Database session
+            use_cache: Whether to use Redis cache (default: True)
             
         Returns:
             True if user has the permission, False otherwise
         """
+        # Try cache first if enabled
+        if use_cache:
+            try:
+                cached_result = asyncio.run(RBACCache.get_permission_check(user_id, resource, action))
+                if cached_result is not None:
+                    logger.debug(f"Cache HIT: Permission check {resource}:{action} for user {user_id} = {cached_result}")
+                    return cached_result
+            except Exception as e:
+                logger.warning(f"Cache lookup failed for permission check, falling back to database: {e}")
+        
+        # Check permission via user permissions
         permission_string = f"{resource}:{action}"
-        user_permissions = PermissionChecker.get_user_permissions(user_id, db)
+        user_permissions = PermissionChecker.get_user_permissions(user_id, db, use_cache=use_cache)
         
         result = permission_string in user_permissions
         
@@ -123,6 +199,13 @@ class PermissionChecker:
             logger.debug(f"User {user_id} has permission {permission_string}")
         else:
             logger.debug(f"User {user_id} does NOT have permission {permission_string}")
+        
+        # Cache the result if caching is enabled
+        if use_cache:
+            try:
+                asyncio.run(RBACCache.set_permission_check(user_id, resource, action, result))
+            except Exception as e:
+                logger.warning(f"Failed to cache permission check: {e}")
         
         return result
     

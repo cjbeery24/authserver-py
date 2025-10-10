@@ -2,6 +2,7 @@
 
 ## Relevant Files
 
+- `app/core/cache.py` - Redis caching utilities for RBAC queries (user roles, permissions, permission checks)
 - `app/main.py` - Main FastAPI application entry point with middleware and route registration
 - `app/main.py` - Unit tests for main application
 - `app/config.py` - Configuration management for environment variables and settings
@@ -170,7 +171,7 @@
 
 - [ ] 8.0 Security and Performance Optimization
 
-  - [ ] 8.1 Implement Redis caching for frequently accessed user data and permissions
+  - [x] 8.1 Implement Redis caching for frequently accessed user data and permissions
   - [ ] 8.2 Create database connection pooling for optimal performance
   - [ ] 8.3 Implement query optimization and proper database indexing
   - [ ] 8.4 Add rate limiting with different thresholds for various endpoints
