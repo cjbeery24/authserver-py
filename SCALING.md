@@ -35,37 +35,41 @@ The auth server is designed to be **stateless** and **horizontally scalable**, a
 ### What Makes It Stateless?
 
 ✅ **No in-memory session storage**
+
 - All sessions managed via JWT tokens
 - Tokens are self-contained (roles included in payload)
 - No server-side session objects
 
 ✅ **Shared state in Redis**
+
 - Token blacklist stored in Redis (shared across instances)
 - Rate limiting counters in Redis
 - Failed login tracking in Redis
 - RBAC cache in Redis
 
 ✅ **Database for persistent state**
+
 - User data
 - Roles and permissions
 - OAuth clients
 - Audit logs
 
 ✅ **No file-based state**
+
 - No local file uploads
 - No local session files
 - All configuration via environment variables
 
 ### What's Shared Across Instances?
 
-| State | Storage | Purpose |
-|-------|---------|---------|
-| Token blacklist | Redis | Instant logout across all instances |
-| Rate limits | Redis | Shared rate limit counters |
-| Failed login tracking | Redis | Attack prevention across instances |
-| RBAC cache | Redis | Performance optimization |
-| User data | PostgreSQL | Single source of truth |
-| Audit logs | PostgreSQL | Centralized security logging |
+| State                 | Storage    | Purpose                             |
+| --------------------- | ---------- | ----------------------------------- |
+| Token blacklist       | Redis      | Instant logout across all instances |
+| Rate limits           | Redis      | Shared rate limit counters          |
+| Failed login tracking | Redis      | Attack prevention across instances  |
+| RBAC cache            | Redis      | Performance optimization            |
+| User data             | PostgreSQL | Single source of truth              |
+| Audit logs            | PostgreSQL | Centralized security logging        |
 
 ## Load Balancer Integration
 
@@ -74,9 +78,11 @@ The auth server is designed to be **stateless** and **horizontally scalable**, a
 The server provides multiple health check endpoints for different use cases:
 
 #### 1. Basic Health Check
+
 ```
 GET /health
 ```
+
 - **Use:** Simple liveness check
 - **Response Time:** <10ms
 - **Load Balancer:** Use for basic health monitoring
@@ -92,9 +98,11 @@ GET /health
 ```
 
 #### 2. Detailed Health Check
+
 ```
 GET /health/detailed
 ```
+
 - **Use:** Deep health check with dependency validation
 - **Checks:** Database connectivity, Redis connectivity
 - **Response Time:** ~50-100ms
@@ -116,17 +124,21 @@ GET /health/detailed
 ```
 
 #### 3. Readiness Check (Kubernetes)
+
 ```
 GET /health/ready
 ```
+
 - **Use:** Kubernetes readiness probe
 - **Indicates:** Server is ready to accept traffic
 - **Load Balancer:** Use for traffic routing decisions
 
 #### 4. Liveness Check (Kubernetes)
+
 ```
 GET /health/live
 ```
+
 - **Use:** Kubernetes liveness probe
 - **Indicates:** Server is alive (not crashed)
 - **Load Balancer:** Use for restart decisions
@@ -167,12 +179,12 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
+
         # WebSocket support (if needed)
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        
+
         # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
@@ -184,6 +196,7 @@ server {
 #### AWS ALB (Application Load Balancer) Example
 
 **Target Group Health Check:**
+
 - Protocol: HTTPS
 - Path: `/health`
 - Interval: 30 seconds
@@ -193,6 +206,7 @@ server {
 - Success codes: 200
 
 **Listener Rules:**
+
 - Port: 443 (HTTPS)
 - Certificate: ACM certificate
 - Target group: auth-server-tg
@@ -230,42 +244,42 @@ spec:
         app: auth-server
     spec:
       containers:
-      - name: auth-server
-        image: your-registry/auth-server:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: APP_ENV
-          value: "production"
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: auth-secrets
-              key: database-url
-        - name: REDIS_URL
-          valueFrom:
-            secretKeyRef:
-              name: auth-secrets
-              key: redis-url
-        livenessProbe:
-          httpGet:
-            path: /health/live
-            port: 8000
-          initialDelaySeconds: 10
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 8000
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
+        - name: auth-server
+          image: your-registry/auth-server:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: APP_ENV
+              value: "production"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: redis-url
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
 ```
 
 ## Scaling Considerations
@@ -273,12 +287,14 @@ spec:
 ### Stateless JWT Design ✅
 
 **Benefits:**
+
 - No session storage needed
 - Tokens verified locally using JWKS public key
 - Instant scale-out (no session synchronization)
 - No sticky sessions required
 
 **Implementation:**
+
 - Roles included in JWT payload
 - Consuming applications verify tokens via JWKS
 - Token blacklist shared via Redis
@@ -286,6 +302,7 @@ spec:
 ### Shared State via Redis ✅
 
 **All shared state is in Redis:**
+
 - Token blacklist (JTI-based)
 - Rate limiting counters
 - Failed login tracking
@@ -293,11 +310,13 @@ spec:
 - Session storage (if needed)
 
 **Redis Configuration:**
+
 - Connection pooling (max 20 connections per instance)
 - Automatic reconnection
 - Cluster-ready (can use Redis Cluster for HA)
 
 **High Availability:**
+
 - Use Redis Sentinel or Redis Cluster
 - Configure multiple Redis nodes
 - Enable persistence (AOF + RDB)
@@ -305,23 +324,27 @@ spec:
 ### Database Connection Pooling ✅
 
 **Configuration (per instance):**
+
 - Pool size: 10 connections
 - Max overflow: 20 additional connections
 - Pool timeout: 30 seconds
 - Pool recycle: 1 hour (prevents stale connections)
 
 **Total Capacity Example:**
+
 - 3 instances × 30 max connections = 90 max DB connections
 - Plan PostgreSQL max_connections accordingly (recommend 200+)
 
 ### Performance Optimizations for Scaling ✅
 
 1. **Redis Caching**
+
    - RBAC queries cached (5 min TTL)
    - 70-90% reduction in database load
    - Shared across all instances
 
 2. **Database Indexes**
+
    - Composite indexes on frequent queries
    - Optimized for RBAC and token lookups
    - N+1 query patterns eliminated
@@ -334,16 +357,19 @@ spec:
 ## Load Balancing Strategies
 
 ### Round Robin
+
 - **Use:** Equal distribution
 - **Best for:** Similar instance sizes
 - **Configuration:** Default for most load balancers
 
 ### Least Connections
+
 - **Use:** Unequal request complexity
 - **Best for:** Mixed workloads (some requests slower than others)
 - **Configuration:** Recommended for auth server
 
 ### IP Hash (Session Affinity)
+
 - **Use:** NOT RECOMMENDED for this server
 - **Reason:** Server is stateless, no benefit from sticky sessions
 - **Exception:** Only if debugging connection-specific issues
@@ -353,6 +379,7 @@ spec:
 ### Horizontal Scaling
 
 **Recommended Setup:**
+
 - **Development:** 1 instance
 - **Staging:** 2 instances (test load balancing)
 - **Production (small):** 3 instances (N+1 redundancy)
@@ -360,6 +387,7 @@ spec:
 - **Production (large):** 10+ instances with auto-scaling
 
 **Auto-Scaling Triggers:**
+
 - CPU > 70% for 5 minutes → scale up
 - CPU < 30% for 10 minutes → scale down
 - Min instances: 3
@@ -368,12 +396,14 @@ spec:
 ### Database Scaling
 
 **PostgreSQL:**
+
 - Use read replicas for read-heavy operations
 - Connection pooling (30 connections/instance max)
 - Consider separate read and write endpoints
 - Use pgBouncer for connection pooling at database level
 
 **Redis:**
+
 - Use Redis Cluster for horizontal scaling
 - Or Redis Sentinel for high availability
 - Configure persistence (AOF + RDB snapshots)
@@ -382,6 +412,7 @@ spec:
 ### Monitoring
 
 **Key Metrics:**
+
 - Request latency (p50, p95, p99)
 - Request rate (req/s)
 - Error rate (4xx, 5xx)
@@ -392,6 +423,7 @@ spec:
 - Failed login rate
 
 **Health Check Monitoring:**
+
 - Monitor `/health/detailed` every 30s
 - Alert if status != "healthy" for > 2 minutes
 - Alert if database or Redis unhealthy
@@ -410,7 +442,7 @@ This server does **NOT require session affinity (sticky sessions)** because:
 ### Docker Compose (Development/Staging)
 
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
   auth-server-1:
@@ -462,6 +494,7 @@ volumes:
 ### AWS ECS/Fargate Example
 
 **Service Configuration:**
+
 - Desired count: 3
 - Minimum healthy percent: 50
 - Maximum percent: 200
@@ -469,6 +502,7 @@ volumes:
 - Deployment type: Rolling update
 
 **Target Group:**
+
 - Protocol: HTTPS
 - Health check: /health
 - Deregistration delay: 30s
@@ -479,11 +513,13 @@ volumes:
 ### Issue: High latency on some instances
 
 **Possible causes:**
+
 1. Uneven load distribution → Check load balancer algorithm
 2. Database connection pool exhausted → Increase pool size or add instances
 3. Redis connection issues → Check Redis health
 
 **Solution:**
+
 - Enable detailed logging
 - Monitor `/health/detailed` on each instance
 - Check database connection pool metrics
@@ -493,6 +529,7 @@ volumes:
 **Cause:** Redis not properly shared
 
 **Solution:**
+
 - Verify all instances connect to same Redis
 - Check `REDIS_URL` environment variable
 - Test Redis connectivity: `redis-cli ping`
@@ -502,6 +539,7 @@ volumes:
 **Cause:** Configuration drift
 
 **Solution:**
+
 - Use environment variables for all config
 - Deploy same Docker image to all instances
 - Verify environment variables are identical
@@ -510,16 +548,19 @@ volumes:
 ## Performance Benchmarks
 
 **Single Instance (8 vCPU, 16GB RAM):**
+
 - Login requests: ~500 req/s
 - Token verification: ~2000 req/s (with cache)
 - Permission checks: ~3000 req/s (with cache)
 
 **3 Instances Behind Load Balancer:**
+
 - Login requests: ~1400 req/s (2.8x)
 - Token verification: ~5500 req/s (2.75x)
 - Nearly linear scaling up to ~10 instances
 
 **Bottlenecks:**
+
 - Database write operations (login, registration)
 - Redis network latency
 - Email sending (async recommended)
@@ -600,6 +641,7 @@ SMTP_PORT=587
 ### Critical: Same Configuration
 
 **MUST be identical across all instances:**
+
 - `JWT_PRIVATE_KEY` and `JWT_PUBLIC_KEY`
 - `SECURITY_SALT`
 - `DATABASE_URL`
@@ -607,6 +649,7 @@ SMTP_PORT=587
 - `JWT_KEY_ID`
 
 **Can be different:**
+
 - Instance-specific hostnames
 - Log levels (for debugging specific instances)
 - Worker counts (based on instance size)
@@ -628,14 +671,17 @@ curl https://auth.yourdomain.com/health
 ### Key Metrics to Monitor
 
 1. **Health Status**
+
    - All instances returning 200 on /health
    - Database and Redis connectivity
 
 2. **Load Distribution**
+
    - Request count per instance (should be roughly equal)
    - Response times per instance
 
 3. **Shared State**
+
    - Redis memory usage
    - Redis key count (blacklist, rate limits)
    - Cache hit ratio
@@ -693,6 +739,7 @@ curl https://auth.yourdomain.com/health
 - **Large deployment:** 15-30 instances
 
 **Beyond 30 instances:**
+
 - Consider microservices architecture
 - Separate read/write databases
 - Use Redis Cluster
@@ -707,6 +754,7 @@ curl https://auth.yourdomain.com/health
 - **Network-bound:** High request rate → Better network
 
 **Recommended Instance Size:**
+
 - Small: 2 vCPU, 4GB RAM (handles ~500 req/s)
 - Medium: 4 vCPU, 8GB RAM (handles ~1500 req/s)
 - Large: 8 vCPU, 16GB RAM (handles ~3000 req/s)
@@ -714,11 +762,13 @@ curl https://auth.yourdomain.com/health
 ### Auto-Scaling
 
 **Scale Up When:**
+
 - CPU > 70% for 5 minutes
 - Request latency p95 > 200ms
 - Connection pool > 80% utilized
 
 **Scale Down When:**
+
 - CPU < 30% for 15 minutes
 - AND current instances > minimum (3)
 
@@ -734,4 +784,3 @@ curl https://auth.yourdomain.com/health
 ✅ **Linear scaling** - Add instances to handle more load
 
 **The auth server is production-ready for horizontal scaling!**
-

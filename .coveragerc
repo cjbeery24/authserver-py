@@ -1,0 +1,33 @@
+[run]
+source = app
+omit =
+    */tests/*
+    */test_*.py
+    */__pycache__/*
+    */migrations/*
+    */alembic/*
+    */__init__.py
+    */conftest.py
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug:
+    if settings.debug:
+    if TYPE_CHECKING:
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    @(abc\.)?abstractmethod
+    assert False
+    raise AssertionError
+
+[html]
+directory = htmlcov
+
+[xml]
+output = coverage.xml
+
