@@ -3,7 +3,7 @@ User model for authentication and authorization.
 """
 
 from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Index
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -14,11 +14,19 @@ class User(Base):
     
     __tablename__ = "users"
     
+    # Additional indexes for performance optimization
+    __table_args__ = (
+        # Index for filtering active users
+        Index('idx_user_is_active', 'is_active'),
+        # Composite index for active user queries with time filtering
+        Index('idx_user_active_created', 'is_active', 'created_at'),
+    )
+    
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(50), unique=True, index=True, nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     

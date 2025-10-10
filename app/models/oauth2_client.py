@@ -2,7 +2,7 @@
 OAuth 2.0 Client model for OpenID Connect applications.
 """
 
-from sqlalchemy import Column, String, Text, Boolean, DateTime
+from sqlalchemy import Column, String, Text, Boolean, DateTime, Index
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -15,12 +15,20 @@ class OAuth2Client(BaseModel):
 
     __tablename__ = "oauth2_clients"
 
+    # Additional indexes for performance optimization
+    __table_args__ = (
+        # Index for filtering active clients
+        Index('idx_oauth2_client_is_active', 'is_active'),
+        # Composite index for active client queries
+        Index('idx_oauth2_client_active_created', 'is_active', 'created_at'),
+    )
+
     client_id = Column(String(255), unique=True, nullable=False, index=True)
     client_secret = Column(String(255), nullable=False)  # Hashed client secret
     name = Column(String(255), nullable=False)
     redirect_uris = Column(Text, nullable=False)  # JSON string of redirect URIs
     scopes = Column(Text, nullable=False)  # JSON string of allowed scopes
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
     secret_last_rotated = Column(DateTime, nullable=True)  # Track when secret was last rotated
 
     # Relationship to tokens (optional - can be added later if needed)

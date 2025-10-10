@@ -333,24 +333,42 @@ async def list_roles(
     
     Requires admin permissions.
     """
-    roles = db.query(Role).offset(skip).limit(limit).all()
+    # Optimized query using subqueries to avoid N+1 pattern
+    from sqlalchemy import func, select
+    
+    # Subquery for user counts
+    user_count_subq = select(
+        UserRole.role_id,
+        func.count(UserRole.user_id).label('user_count')
+    ).group_by(UserRole.role_id).subquery()
+    
+    # Subquery for permission counts
+    perm_count_subq = select(
+        RolePermission.role_id,
+        func.count(RolePermission.permission_id).label('permission_count')
+    ).group_by(RolePermission.role_id).subquery()
+    
+    # Join role with both subqueries
+    roles_with_counts = db.query(
+        Role,
+        func.coalesce(user_count_subq.c.user_count, 0).label('user_count'),
+        func.coalesce(perm_count_subq.c.permission_count, 0).label('permission_count')
+    ).outerjoin(
+        user_count_subq, Role.id == user_count_subq.c.role_id
+    ).outerjoin(
+        perm_count_subq, Role.id == perm_count_subq.c.role_id
+    ).offset(skip).limit(limit).all()
     
     role_responses = []
-    for role in roles:
-        # Count users with this role
-        user_count = db.query(UserRole).filter(UserRole.role_id == role.id).count()
-        
-        # Count permissions for this role
-        permission_count = db.query(RolePermission).filter(RolePermission.role_id == role.id).count()
-        
+    for role, user_count, permission_count in roles_with_counts:
         role_responses.append(RoleResponse(
             id=role.id,
             name=role.name,
             description=role.description,
             created_at=role.created_at.isoformat(),
             updated_at=role.updated_at.isoformat(),
-            user_count=user_count,
-            permission_count=permission_count
+            user_count=int(user_count),
+            permission_count=int(permission_count)
         ))
     
     return role_responses
@@ -1167,6 +1185,9 @@ async def list_users(
     
     Requires admin permissions.
     """
+    from sqlalchemy import func
+    from sqlalchemy.orm import joinedload
+    
     query = db.query(User)
     
     if active_only:
@@ -1174,12 +1195,30 @@ async def list_users(
     
     users = query.offset(skip).limit(limit).all()
     
+    # Optimize: Fetch all user-role mappings for these users in one query
+    user_ids = [u.id for u in users]
+    if user_ids:
+        user_roles_query = db.query(
+            UserRole.user_id,
+            Role.name
+        ).join(
+            Role, UserRole.role_id == Role.id
+        ).filter(
+            UserRole.user_id.in_(user_ids)
+        ).all()
+        
+        # Build a mapping of user_id -> list of role names
+        user_roles_map = {}
+        for user_id, role_name in user_roles_query:
+            if user_id not in user_roles_map:
+                user_roles_map[user_id] = []
+            user_roles_map[user_id].append(role_name)
+    else:
+        user_roles_map = {}
+    
+    # Build responses using the pre-fetched data
     user_responses = []
     for user in users:
-        # Use PermissionChecker to get roles (benefits from caching)
-        roles = PermissionChecker.get_user_roles(user.id, db)
-        role_names = [role.name for role in roles]
-        
         user_responses.append(AdminUserResponse(
             id=user.id,
             username=user.username,
@@ -1187,7 +1226,7 @@ async def list_users(
             is_active=user.is_active,
             created_at=user.created_at.isoformat(),
             updated_at=user.updated_at.isoformat(),
-            roles=role_names
+            roles=user_roles_map.get(user.id, [])
         ))
     
     return user_responses

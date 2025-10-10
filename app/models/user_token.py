@@ -28,6 +28,8 @@ class UserToken(BaseModel):
         Index('idx_user_tokens_expires_at', 'expires_at'),
         Index('idx_user_tokens_user_type', 'user_id', 'token_type'),
         Index('idx_user_tokens_user_created', 'user_id', 'created_at'),
+        # Composite index for active token queries (most common query pattern)
+        Index('idx_user_tokens_active', 'user_id', 'is_revoked', 'expires_at'),
     )
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
