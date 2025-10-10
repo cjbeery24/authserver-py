@@ -8,6 +8,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
+from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from contextlib import asynccontextmanager
 import time
 import logging
@@ -113,6 +114,17 @@ if settings.cors_enabled:
         allow_methods=get_cors_methods(),
         allow_headers=get_cors_headers(),
     ) 
+
+# Add HTTPS redirect middleware for production (uses Starlette's built-in)
+if settings.app_env == 'production':
+    app.add_middleware(HTTPSRedirectMiddleware)
+    logger.info("HTTPS redirect middleware enabled (production mode - all HTTP redirected to HTTPS)")
+
+# Add TrustedHost middleware for production (prevents host header attacks)
+if settings.app_env == 'production':
+    trusted_hosts = settings.trusted_hosts.split(',') if hasattr(settings, 'trusted_hosts') and settings.trusted_hosts else ['*']
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
+    logger.info(f"Trusted host middleware enabled with hosts: {trusted_hosts}")
 
 # Add request validation middleware (first line of defense)
 app.add_middleware(RequestValidationMiddleware)

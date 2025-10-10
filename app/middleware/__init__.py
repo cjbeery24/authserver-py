@@ -19,6 +19,7 @@ from .validation_middleware import (
     InputSanitizer,
     PydanticValidators
 )
+from .https_redirect import HTTPSEnforcementMiddleware, SecureProxyHeadersMiddleware
 
 __all__ = [
     # Authentication
@@ -31,6 +32,8 @@ __all__ = [
     "get_raw_token_or_401",
     # Security
     "SecurityHeadersMiddleware",
+    "HTTPSEnforcementMiddleware",
+    "SecureProxyHeadersMiddleware",
     # Logging
     "RequestResponseLoggingMiddleware",
     "StructuredLogger",
