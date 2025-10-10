@@ -50,8 +50,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Process the request
         response = await call_next(request)
         
-        # Add security headers
-        self._add_security_headers(request, response)
+        # Skip strict CSP for Swagger UI documentation endpoints
+        if self._is_docs_endpoint(request.url.path):
+            self._add_relaxed_security_headers(request, response)
+        else:
+            # Add security headers
+            self._add_security_headers(request, response)
         
         # Add token-specific security headers for auth endpoints
         if self._is_auth_endpoint(request.url.path):
@@ -77,6 +81,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             f"script-src {self.config['csp_script_src']}",
             f"style-src {self.config['csp_style_src']}",
             f"img-src {self.config['csp_img_src']}",
+            f"font-src 'self' data:",  # Allow fonts from self and data URIs for Swagger UI
             f"connect-src {self.config['csp_connect_src']}",
             "object-src 'none'",
             "base-uri 'self'",
@@ -105,11 +110,58 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         
         # Remove server information
-        response.headers.pop("Server", None)
+        if "Server" in response.headers:
+            del response.headers["Server"]
         
         # Add custom security header for API
         response.headers["X-API-Version"] = "v1"
         response.headers["X-Powered-By"] = "AuthServer"
+    
+    def _add_relaxed_security_headers(self, request: Request, response: Response) -> None:
+        """Add relaxed security headers for documentation endpoints."""
+        
+        # HTTPS Strict Transport Security (only for HTTPS)
+        if request.url.scheme == 'https' or settings.app_env == 'production':
+            hsts_value = f"max-age={self.config['hsts_max_age']}"
+            if self.config['hsts_include_subdomains']:
+                hsts_value += "; includeSubDomains"
+            if self.config['hsts_preload']:
+                hsts_value += "; preload"
+            response.headers["Strict-Transport-Security"] = hsts_value
+        
+        # In development, disable CSP for documentation endpoints
+        # Swagger UI has complex resource loading requirements
+        if settings.app_env != 'production':
+            # No CSP header = no restrictions
+            pass
+        else:
+            # In production, use relaxed CSP for docs
+            csp_directives = [
+                "default-src 'self'",
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data: https: blob:",
+                "font-src 'self' data:",
+                "connect-src 'self'",
+                "worker-src 'self' blob:",
+                "child-src 'self' blob:",
+                "object-src 'none'",
+                "base-uri 'self'",
+            ]
+            response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
+        
+        # X-Content-Type-Options
+        response.headers["X-Content-Type-Options"] = self.config['x_content_type_options']
+        
+        # X-Frame-Options - Allow for docs
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        
+        # Referrer Policy
+        response.headers["Referrer-Policy"] = self.config['referrer_policy']
+        
+        # Remove server information
+        if "Server" in response.headers:
+            del response.headers["Server"]
     
     def _add_token_security_headers(self, request: Request, response: Response) -> None:
         """Add token-specific security headers for authentication endpoints."""
@@ -145,6 +197,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "/.well-known/"
         ]
         return any(auth_path in path for auth_path in auth_paths)
+    
+    def _is_docs_endpoint(self, path: str) -> bool:
+        """Check if the path is a documentation endpoint."""
+        # Include static files served by FastAPI for Swagger UI
+        docs_paths = ['/docs', '/redoc', '/openapi.json', '/static/']
+        return any(path.startswith(docs_path) for docs_path in docs_paths)
     
     def _is_cors_preflight(self, request: Request) -> bool:
         """Check if this is a CORS preflight request."""
