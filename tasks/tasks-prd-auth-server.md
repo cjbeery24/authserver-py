@@ -3,6 +3,7 @@
 ## Relevant Files
 
 - `SECURITY.md` - Comprehensive security implementation guide and attack protection documentation
+- `SCALING.md` - Horizontal scaling guide with load balancer configuration and deployment examples
 - `app/core/cache.py` - Redis caching utilities for RBAC queries (user roles, permissions, permission checks)
 - `app/main.py` - Main FastAPI application entry point with middleware and route registration
 - `app/main.py` - Unit tests for main application
@@ -181,7 +182,7 @@
   - [x] 8.7 Implement HTTPS/TLS enforcement for production
   - [x] 8.8 Add protection against common attacks (SQL injection, XSS, CSRF)
   - [ ] 8.9 Create performance monitoring and metrics collection
-  - [ ] 8.10 Implement horizontal scaling considerations and load balancer support
+  - [x] 8.10 Implement horizontal scaling considerations and load balancer support
 
 - [ ] 9.0 Testing and Documentation
 
