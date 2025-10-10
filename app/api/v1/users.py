@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.security import PasswordHasher, AuthenticationManager
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
+from app.models.audit_log import AuditLog
 from app.middleware import get_current_user_or_401
 from pydantic import BaseModel, EmailStr, Field
 
@@ -160,6 +161,7 @@ async def update_user_profile(
 @router.put("/me/password",
             dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def update_password(
+    request: Request,
     password_update: UpdatePasswordRequest,
     current_user: User = Depends(get_current_user_or_401),
     db: Session = Depends(get_db)
@@ -183,6 +185,16 @@ async def update_password(
     )
     
     current_user.password_hash = new_password_hash
+    db.commit()
+    
+    # Log password change
+    AuditLog.log_password_change(
+        db_session=db,
+        user_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent'),
+        success=True
+    )
     db.commit()
     
     logger.info(f"Password updated for user {current_user.id}")
@@ -244,6 +256,7 @@ async def get_security_settings(
 @router.delete("/me",
               dependencies=[Depends(RateLimiter(times=3, hours=1))])
 async def delete_account(
+    request: Request,
     password: str = Field(..., description="Password for verification"),
     current_user: User = Depends(get_current_user_or_401),
     db: Session = Depends(get_db)
@@ -263,6 +276,20 @@ async def delete_account(
     
     # Mark account as inactive instead of deleting (for audit purposes)
     current_user.is_active = False
+    db.commit()
+    
+    # Log account deletion
+    AuditLog.log_event(
+        db_session=db,
+        user_id=current_user.id,
+        action="account_delete",
+        resource="user",
+        resource_id=str(current_user.id),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent'),
+        success=True,
+        details={"event_type": "user_management", "action_type": "self_delete"}
+    )
     db.commit()
     
     logger.warning(f"User account deactivated: {current_user.id}")

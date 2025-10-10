@@ -32,6 +32,7 @@ from app.models.password_reset import PasswordResetToken
 from app.models.user_token import UserToken
 from app.models.oauth2_authorization_code import OAuth2AuthorizationCode
 from app.models.oauth2_client_token import OAuth2ClientToken
+from app.models.audit_log import AuditLog
 from app.core.config import settings
 from sqlalchemy import and_
 from app.core.email import email_service
@@ -354,6 +355,16 @@ async def login_for_access_token(
             message="Multi-factor authentication required. Use /token/mfa endpoint with MFA token."
         )
 
+    # Log successful login
+    AuditLog.log_login(
+        db_session=db,
+        user_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent'),
+        success=True
+    )
+    db.commit()
+    
     # No MFA required, return tokens
     return await _create_token_response(
         user=user,
@@ -401,6 +412,20 @@ async def verify_mfa_token(
     if not mfa_secret:
         raise AuthError.mfa_not_enabled()
 
+    # Log successful MFA login
+    AuditLog.log_event(
+        db_session=db,
+        user_id=user.id,
+        action="login_mfa",
+        resource="user",
+        resource_id=str(user.id),
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get('User-Agent'),
+        success=True,
+        details={"event_type": "authentication", "method": "mfa"}
+    )
+    db.commit()
+    
     # Authentication successful, return tokens
     return await _create_token_response(
         user=user,
@@ -531,6 +556,15 @@ async def logout(
             user_agent=request.headers.get('User-Agent')
         )
 
+        # Log logout event
+        AuditLog.log_logout(
+            db_session=db,
+            user_id=user_id,
+            ip_address=client_ip,
+            user_agent=request.headers.get('User-Agent')
+        )
+        db.commit()
+        
         if token_blacklisted:
             logger.info(f"User {user_id} logged out successfully from IP: {client_ip} (Redis: {token_blacklisted}, DB: {db_token_revoked})")
             return LogoutResponse(
@@ -698,6 +732,20 @@ async def request_password_reset(
         db.add(password_reset_token)
         db.commit()
         
+        # Log password reset request
+        AuditLog.log_event(
+            db_session=db,
+            user_id=user.id,
+            action="password_reset_request",
+            resource="user",
+            resource_id=str(user.id),
+            ip_address=client_ip,
+            user_agent=request.headers.get('User-Agent'),
+            success=True,
+            details={"event_type": "security", "action_type": "password_reset_requested"}
+        )
+        db.commit()
+        
         # Send password reset email
         email_sent = await email_service.send_password_reset_email(
             email=user.email,
@@ -777,6 +825,16 @@ async def confirm_password_reset(
             user_agent=request.headers.get('User-Agent')
         )
         
+        db.commit()
+        
+        # Log password reset completion
+        AuditLog.log_password_change(
+            db_session=db,
+            user_id=user.id,
+            ip_address=client_ip,
+            user_agent=request.headers.get('User-Agent'),
+            success=True
+        )
         db.commit()
         
         # Send password changed notification email
