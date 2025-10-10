@@ -476,7 +476,8 @@ async def create_admin_mfa_bypass(
     )
 
 
-@router.post("/bypass/validate")
+@router.post("/bypass/validate",
+             dependencies=[Depends(RateLimiter(times=10, minutes=1))])
 async def validate_mfa_bypass(
     bypass_token: str = Field(..., description="MFA bypass token"),
     user_id: int = Field(..., description="User ID"),
@@ -618,7 +619,8 @@ class MFARecoveryCompleteRequest(BaseModel):
     action: str = Field(default="disable", description="Action: 'disable' or 'reset'")
 
 
-@router.post("/recovery/complete")
+@router.post("/recovery/complete",
+             dependencies=[Depends(RateLimiter(times=10, minutes=1))])
 async def complete_mfa_recovery(
     recovery_request: MFARecoveryCompleteRequest,
     db: Session = Depends(get_db),

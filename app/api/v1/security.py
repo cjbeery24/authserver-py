@@ -4,6 +4,7 @@ Security-focused API endpoints for token management and security validation.
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
+from fastapi_limiter.depends import RateLimiter
 from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional
 import logging
@@ -56,7 +57,8 @@ class SecurityAuditResponse(BaseModel):
     risk_score: int = Field(..., description="Risk score from 0-100")
 
 
-@router.post("/validate-transmission", response_model=TokenSecurityValidationResponse)
+@router.post("/validate-transmission", response_model=TokenSecurityValidationResponse,
+            dependencies=[Depends(RateLimiter(times=30, minutes=1))])
 async def validate_token_transmission_security(
     request: Request,
     current_user: User = Depends(get_current_user_or_401)
@@ -104,7 +106,8 @@ async def validate_token_transmission_security(
         )
 
 
-@router.post("/rotate-token", response_model=TokenRotationResponse)
+@router.post("/rotate-token", response_model=TokenRotationResponse,
+            dependencies=[Depends(RateLimiter(times=20, minutes=1))])
 async def rotate_user_token(
     request: Request,
     rotation_request: TokenRotationRequest,
@@ -154,7 +157,8 @@ async def rotate_user_token(
         )
 
 
-@router.post("/revoke-all-tokens")
+@router.post("/revoke-all-tokens",
+            dependencies=[Depends(RateLimiter(times=5, minutes=1))])
 async def revoke_all_user_tokens(
     request: Request,
     current_user: User = Depends(get_current_user_or_401),

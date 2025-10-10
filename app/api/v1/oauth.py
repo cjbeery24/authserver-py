@@ -495,7 +495,8 @@ def validate_authorization_csrf_token(csrf_token: str) -> dict:
             raise OAuth2Error("invalid_request", f"Invalid CSRF token: {str(e)}")
 
 
-@router.post("/authorize/complete", response_model=Dict[str, Any])
+@router.post("/authorize/complete", response_model=Dict[str, Any],
+            dependencies=[Depends(RateLimiter(times=30, minutes=1))])
 @handle_oauth2_exceptions
 async def complete_authorization(
     request: Request,
@@ -1131,7 +1132,8 @@ async def get_client(
     )
 
 
-@router.put("/clients/{client_id}", response_model=OAuth2ClientManagementResponse)
+@router.put("/clients/{client_id}", response_model=OAuth2ClientManagementResponse,
+           dependencies=[Depends(RateLimiter(times=10, minutes=1))])
 async def update_client(
     client_id: str,
     client_data: OAuth2ClientRegistrationRequest,
@@ -1186,7 +1188,8 @@ async def update_client(
     )
 
 
-@router.delete("/clients/{client_id}")
+@router.delete("/clients/{client_id}",
+              dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def delete_client(
     client_id: str,
     client: OAuth2Client = Depends(get_client_from_registration_token),
@@ -1219,7 +1222,8 @@ async def delete_client(
     return {"message": "Client successfully deactivated"}
 
 
-@router.post("/clients/{client_id}/rotate-secret", response_model=Dict[str, Any])
+@router.post("/clients/{client_id}/rotate-secret", response_model=Dict[str, Any],
+            dependencies=[Depends(RateLimiter(times=10, hours=1))])
 @handle_oauth2_exceptions
 async def rotate_client_secret(
     client_id: str,

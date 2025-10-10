@@ -494,7 +494,8 @@ async def get_current_user(
     )
 
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout", response_model=LogoutResponse,
+            dependencies=[Depends(RateLimiter(times=30, minutes=1))])
 async def logout(
     request: Request,
     current_user: User = Depends(get_current_user_or_401),
@@ -558,7 +559,8 @@ async def logout(
         )
 
 
-@router.post("/logout-all", response_model=LogoutResponse)
+@router.post("/logout-all", response_model=LogoutResponse,
+            dependencies=[Depends(RateLimiter(times=10, minutes=1))])
 async def logout_all_devices(
     request: Request,
     current_user: User = Depends(get_current_user_or_401),
@@ -800,7 +802,8 @@ async def confirm_password_reset(
         raise AuthError.password_reset_failed()
 
 
-@router.post("/admin/cleanup-tokens", response_model=dict)
+@router.post("/admin/cleanup-tokens", response_model=dict,
+            dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def cleanup_expired_tokens(
     db: Session = Depends(get_db)
 ):

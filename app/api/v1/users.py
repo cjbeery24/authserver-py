@@ -241,7 +241,8 @@ async def get_security_settings(
     )
 
 
-@router.delete("/me")
+@router.delete("/me",
+              dependencies=[Depends(RateLimiter(times=3, hours=1))])
 async def delete_account(
     password: str = Field(..., description="Password for verification"),
     current_user: User = Depends(get_current_user_or_401),
