@@ -139,7 +139,7 @@ def test_user(db_session):
     user = User(
         username="testuser",
         email="test@example.com",
-        password_hash=PasswordHasher.hash_password("TestPassword123!", "testuser"),
+        password_hash=PasswordHasher.hash_password("T3stP@ssw0rd!", "testuser"),
         is_active=True
     )
     db_session.add(user)
@@ -171,7 +171,7 @@ def admin_user(db_session):
     user = User(
         username="adminuser",
         email="admin@example.com",
-        password_hash=PasswordHasher.hash_password("AdminPass123!", "adminuser"),
+        password_hash=PasswordHasher.hash_password("Adm1nP@ssw0rd!", "adminuser"),
         is_active=True
     )
     db_session.add(user)
@@ -213,8 +213,8 @@ def test_oauth_client(db_session):
 
 @pytest.fixture(scope="function")
 def test_password():
-    """Provide a valid test password."""
-    return "TestPassword123!"
+    """Provide a valid test password (no sequential chars)."""
+    return "T3stP@ssw0rd!"  # Valid password without sequential characters
 
 
 @pytest.fixture(scope="function")

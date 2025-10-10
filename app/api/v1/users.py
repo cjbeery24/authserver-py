@@ -253,11 +253,17 @@ async def get_security_settings(
     )
 
 
+from pydantic import BaseModel
+
+class DeleteAccountRequest(BaseModel):
+    """Request model for account deletion."""
+    password: str = Field(..., description="Password for verification")
+
 @router.delete("/me",
               dependencies=[Depends(RateLimiter(times=3, hours=1))])
 async def delete_account(
     request: Request,
-    password: str = Field(..., description="Password for verification"),
+    delete_data: DeleteAccountRequest,
     current_user: User = Depends(get_current_user_or_401),
     db: Session = Depends(get_db)
 ):
@@ -268,7 +274,7 @@ async def delete_account(
     Requires password verification.
     """
     # Verify password using centralized authentication manager
-    if not AuthenticationManager.verify_user_password(current_user, password):
+    if not AuthenticationManager.verify_user_password(current_user, delete_data.password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid password"

@@ -2,7 +2,7 @@
 MFA (Multi-Factor Authentication) management API endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Form
 from fastapi_limiter.depends import RateLimiter
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -479,8 +479,8 @@ async def create_admin_mfa_bypass(
 @router.post("/bypass/validate",
              dependencies=[Depends(RateLimiter(times=10, minutes=1))])
 async def validate_mfa_bypass(
-    bypass_token: str = Field(..., description="MFA bypass token"),
-    user_id: int = Field(..., description="User ID"),
+    bypass_token: str = Form(..., description="MFA bypass token"),
+    user_id: int = Form(..., description="User ID"),
     db: Session = Depends(get_db),
     redis_client = Depends(get_redis_dependency)
 ):
