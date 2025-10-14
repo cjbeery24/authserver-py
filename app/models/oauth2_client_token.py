@@ -30,7 +30,7 @@ class OAuth2ClientToken(BaseModel):
     client_id = Column(Integer, ForeignKey("oauth2_clients.id"), nullable=False, index=True)
     token = Column(String(255), nullable=False, unique=True, index=True)
     token_type = Column(String(50), nullable=False, default="registration")  # "registration", "access", etc.
-    expires_at = Column(DateTime, nullable=True)  # Optional expiration
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # Optional expiration
 
     # Relationships
     client = relationship("OAuth2Client", backref="client_tokens")

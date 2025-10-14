@@ -65,7 +65,7 @@ async def schedule_token_cleanup():
 
     Runs every 24 hours.
     """
-    from app.core.database import get_db_session
+    from app.core.database import get_db
     from app.core.security import TokenRotation
 
     while True:
@@ -76,7 +76,7 @@ async def schedule_token_cleanup():
             logger.info("Running scheduled token cleanup and maintenance...")
 
             # Create database session and clean up tokens
-            db = next(get_db_session())
+            db = next(get_db())
             try:
                 # Enhanced token cleanup
                 cleanup_stats = await TokenRotation.cleanup_expired_tokens(db, days_old=30)

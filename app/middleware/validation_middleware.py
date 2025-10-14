@@ -65,7 +65,10 @@ class RequestValidationMiddleware(BaseHTTPMiddleware):
         # Validate content type for state-changing requests
         if request.method in ["POST", "PUT", "PATCH"]:
             content_type = request.headers.get("content-type", "")
-            if not self._is_valid_content_type(content_type):
+            content_length = int(request.headers.get("content-length", "0"))
+            
+            # Allow empty content-type if there's no body (content-length is 0)
+            if content_length > 0 and not self._is_valid_content_type(content_type):
                 logger.warning(
                     f"Invalid content type: {content_type} | "
                     f"path={request.url.path} | "

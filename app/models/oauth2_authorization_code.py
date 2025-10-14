@@ -31,7 +31,7 @@ class OAuth2AuthorizationCode(BaseModel):
     code = Column(String(255), unique=True, nullable=False, index=True)
     redirect_uri = Column(Text, nullable=False)
     scope = Column(Text, nullable=True)  # JSON string of granted scopes
-    expires_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
     # PKCE fields
     code_challenge = Column(Text, nullable=True)

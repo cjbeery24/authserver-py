@@ -54,6 +54,9 @@ def db_session(test_db_engine):
     finally:
         session.rollback()
         session.close()
+        # Clear all tables for next test
+        Base.metadata.drop_all(bind=test_db_engine)
+        Base.metadata.create_all(bind=test_db_engine)
 
 
 @pytest.fixture(scope="function")
@@ -70,25 +73,42 @@ def override_get_db(db_session):
 
 # ==================== REDIS FIXTURES ====================
 
-@pytest.fixture(scope="session")
-async def redis_client():
-    """Create a Redis client for testing."""
-    try:
-        client = await get_redis()
-        # Clear test data before tests
-        await client.flushdb()
-        yield client
-    except Exception as e:
-        # If Redis is not available, skip Redis-dependent tests
-        pytest.skip(f"Redis not available: {e}")
-
-
-@pytest.fixture(scope="function")
-async def clean_redis(redis_client):
-    """Clear Redis before each test."""
-    await redis_client.flushdb()
-    yield redis_client
-    await redis_client.flushdb()
+@pytest.fixture(scope="function", autouse=True)
+def clear_redis_cache():
+    """Clear Redis cache before and after each test."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    def _clear_cache():
+        """Helper to clear Redis cache."""
+        try:
+            # Reset the global Redis client to force reconnection
+            import app.core.redis as redis_module
+            redis_module.redis_client = None
+            redis_module.redis_pool = None
+            
+            # Use synchronous Redis client to avoid event loop issues
+            import redis
+            from app.core.config import settings
+            
+            redis_url = getattr(settings, 'redis_url', 'redis://redis-test:6379/0')
+            sync_redis = redis.Redis.from_url(redis_url, decode_responses=True)
+            
+            # Test connection first
+            sync_redis.ping()
+            sync_redis.flushdb()
+            logger.debug("Redis cache cleared successfully")
+            
+        except Exception as e:
+            logger.warning(f"Failed to clear Redis cache: {e}")
+    
+    # Clear before test
+    _clear_cache()
+    
+    yield
+    
+    # Clear after test
+    _clear_cache()
 
 
 # ==================== API CLIENT FIXTURES ====================
@@ -107,7 +127,7 @@ def client(override_get_db):
 
 @pytest.fixture(scope="function")
 def authenticated_client(client, test_user, db_session):
-    """Create a test client with an authenticated user."""
+    """Create a test client with an authenticated regular user."""
     from app.core.security import TokenManager
     
     # Create access token for test user
@@ -128,6 +148,103 @@ def authenticated_client(client, test_user, db_session):
     client.headers.pop("Authorization", None)
 
 
+@pytest.fixture(scope="function")
+def admin_authenticated_client(client, admin_user, db_session):
+    """Create a test client with an authenticated admin user."""
+    from app.core.security import TokenManager
+    
+    # Create access token for admin user with admin role
+    # Note: admin_user fixture creates user with "admin" role
+    token_data = {
+        "sub": str(admin_user.id),
+        "username": admin_user.username,
+        "email": admin_user.email,
+        "roles": ["admin"]  # Use admin role directly
+    }
+    access_token = TokenManager.create_access_token(token_data)
+    
+    # Add authorization header to client
+    client.headers["Authorization"] = f"Bearer {access_token}"
+    
+    yield client
+    
+    # Clean up
+    client.headers.pop("Authorization", None)
+
+
+@pytest.fixture(scope="function")
+def superuser_authenticated_client(client, db_session):
+    """Create a test client with an authenticated superuser."""
+    from app.models.user import User
+    from app.models.role import Role
+    from app.models.user_role import UserRole
+    from app.core.security import PasswordHasher, TokenManager
+    
+    # Create superuser role if it doesn't exist
+    superuser_role = db_session.query(Role).filter(Role.name == "superuser").first()
+    if not superuser_role:
+        superuser_role = Role(name="superuser", description="Super administrator role")
+        db_session.add(superuser_role)
+        db_session.commit()
+        db_session.refresh(superuser_role)
+    
+    # Create superuser
+    user = User(
+        username="superuser",
+        email="super@example.com",
+        password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "superuser"),
+        is_active=True
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    
+    # Assign superuser role
+    user_role = UserRole(user_id=user.id, role_id=superuser_role.id)
+    db_session.add(user_role)
+    db_session.commit()
+    
+    # Create access token for superuser
+    token_data = {
+        "sub": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "roles": ["superuser"]
+    }
+    access_token = TokenManager.create_access_token(token_data)
+    
+    # Add authorization header to client
+    client.headers["Authorization"] = f"Bearer {access_token}"
+    
+    yield client
+    
+    # Clean up
+    client.headers.pop("Authorization", None)
+
+
+@pytest.fixture(scope="function")
+def create_authenticated_client():
+    """Factory fixture to create authenticated clients with custom roles."""
+    def _create_client(client, user, roles, db_session):
+        from app.core.security import TokenManager
+        
+        # Create access token with specified roles
+        token_data = {
+            "sub": str(user.id),
+            "username": user.username,
+            "email": user.email,
+            "roles": roles
+        }
+        access_token = TokenManager.create_access_token(token_data)
+        
+        # Add authorization header to client
+        client.headers["Authorization"] = f"Bearer {access_token}"
+        
+        return client
+    
+    return _create_client
+
+
 # ==================== USER FIXTURES ====================
 
 @pytest.fixture(scope="function")
@@ -139,7 +256,7 @@ def test_user(db_session):
     user = User(
         username="testuser",
         email="test@example.com",
-        password_hash=PasswordHasher.hash_password("T3stP@ssw0rd!", "testuser"),
+        password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "testuser"),
         is_active=True
     )
     db_session.add(user)
@@ -171,7 +288,7 @@ def admin_user(db_session):
     user = User(
         username="adminuser",
         email="admin@example.com",
-        password_hash=PasswordHasher.hash_password("Adm1nP@ssw0rd!", "adminuser"),
+        password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "adminuser"),
         is_active=True
     )
     db_session.add(user)
@@ -213,8 +330,8 @@ def test_oauth_client(db_session):
 
 @pytest.fixture(scope="function")
 def test_password():
-    """Provide a valid test password (no sequential chars)."""
-    return "T3stP@ssw0rd!"  # Valid password without sequential characters
+    """Provide a valid test password that passes validation."""
+    return "Str0ngP@ssw0rd!"  # Consistent password used across all tests
 
 
 @pytest.fixture(scope="function")

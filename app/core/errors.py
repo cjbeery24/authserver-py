@@ -24,6 +24,7 @@ class ErrorCode(Enum):
     EXPIRED_TOKEN = "TOKEN_002"
     BLACKLISTED_TOKEN = "TOKEN_003"
     INVALID_TOKEN_PAYLOAD = "TOKEN_004"
+    INVALID_SESSION_TOKEN = "TOKEN_005"
     
     # Registration errors
     USERNAME_TAKEN = "REG_001"
@@ -64,6 +65,7 @@ class ErrorMessage:
     BLACKLISTED_TOKEN = "Token has been invalidated"
     INVALID_REFRESH_TOKEN = "Invalid, expired, or blacklisted refresh token"
     INVALID_TOKEN_PAYLOAD = "Invalid token payload"
+    INVALID_SESSION_TOKEN = "Invalid or expired session token"
     
     # Registration error messages
     USERNAME_TAKEN = "Username is already registered"
@@ -184,7 +186,16 @@ class AuthError:
             ErrorMessage.INVALID_TOKEN_PAYLOAD,
             status.HTTP_401_UNAUTHORIZED
         )
-    
+
+    @staticmethod
+    def invalid_session_token() -> HTTPException:
+        """Invalid session token error."""
+        return AuthError.create_error(
+            ErrorCode.INVALID_SESSION_TOKEN,
+            ErrorMessage.INVALID_SESSION_TOKEN,
+            status.HTTP_401_UNAUTHORIZED
+        )
+
     # Registration errors
     @staticmethod
     def username_taken() -> HTTPException:

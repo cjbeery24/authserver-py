@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
 import logging
-import asyncio
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -226,8 +225,8 @@ async def _require_admin(current_user: User = Depends(get_current_user_or_401), 
     Checks if the user has the 'admin' role or 'admin:access' permission.
     """
     # Check if user has admin role or admin:access permission
-    has_admin_role = PermissionChecker.has_role(current_user.id, "admin", db)
-    has_admin_permission = PermissionChecker.has_permission(current_user.id, "admin", "access", db)
+    has_admin_role = await PermissionChecker.has_role(current_user.id, "admin", db)
+    has_admin_permission = await PermissionChecker.has_permission(current_user.id, "admin", "access", db)
     
     if not (has_admin_role or has_admin_permission):
         logger.warning(
@@ -812,7 +811,7 @@ async def assign_role_to_user(
         
         # Invalidate cache for this user
         from app.core.cache import RBACCache
-        asyncio.run(RBACCache.invalidate_user(assignment.user_id))
+        await RBACCache.invalidate_user(assignment.user_id)
         
         logger.info(f"Role '{role.name}' assigned to user {user.username} by admin {current_user.id}")
         
@@ -900,7 +899,7 @@ async def remove_role_from_user(
         
         # Invalidate cache for this user
         from app.core.cache import RBACCache
-        asyncio.run(RBACCache.invalidate_user(assignment.user_id))
+        await RBACCache.invalidate_user(assignment.user_id)
         
         logger.info(f"Role '{role.name}' removed from user {user.username} by admin {current_user.id}")
         
@@ -939,7 +938,7 @@ async def get_user_roles(
         )
     
     # Use PermissionChecker to get roles (benefits from caching)
-    roles = PermissionChecker.get_user_roles(user_id, db)
+    roles = await PermissionChecker.get_user_roles(user_id, db)
     
     return [
         RoleResponse(
@@ -1029,7 +1028,7 @@ async def assign_permission_to_role(
         
         # Invalidate cache for this role
         from app.core.cache import RBACCache
-        asyncio.run(RBACCache.invalidate_role(assignment.role_id))
+        await RBACCache.invalidate_role(assignment.role_id)
         
         logger.info(f"Permission '{permission.permission_string}' assigned to role '{role.name}' by admin {current_user.id}")
         
@@ -1116,7 +1115,7 @@ async def remove_permission_from_role(
         
         # Invalidate cache for this role
         from app.core.cache import RBACCache
-        asyncio.run(RBACCache.invalidate_role(assignment.role_id))
+        await RBACCache.invalidate_role(assignment.role_id)
         
         logger.info(f"Permission '{permission.permission_string}' removed from role '{role.name}' by admin {current_user.id}")
         
@@ -1155,7 +1154,7 @@ async def get_role_permissions(
         )
     
     # Use PermissionChecker to get role permissions (benefits from caching)
-    permissions = PermissionChecker.get_role_permissions(role_id, db)
+    permissions = await PermissionChecker.get_role_permissions(role_id, db)
     
     return [
         PermissionResponse(
@@ -1251,7 +1250,7 @@ async def get_user_details(
         )
     
     # Use PermissionChecker to get roles (benefits from caching)
-    roles = PermissionChecker.get_user_roles(user.id, db)
+    roles = await PermissionChecker.get_user_roles(user.id, db)
     role_names = [role.name for role in roles]
     
     return AdminUserResponse(

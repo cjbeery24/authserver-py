@@ -397,8 +397,8 @@ async def create_admin_mfa_bypass(
     from app.core.rbac import PermissionChecker
     
     # Check if user has permission to bypass MFA
-    has_permission = PermissionChecker.has_permission(current_user.id, "mfa", "bypass", db)
-    has_admin_role = PermissionChecker.has_role(current_user.id, "admin", db)
+    has_permission = await PermissionChecker.has_permission(current_user.id, "mfa", "bypass", db)
+    has_admin_role = await PermissionChecker.has_role(current_user.id, "admin", db)
     
     if not (has_permission or has_admin_role):
         logger.warning(

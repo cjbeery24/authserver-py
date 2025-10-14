@@ -20,7 +20,7 @@ class OAuth2Token(BaseModel):
     token_type = Column(String(50), nullable=False)  # "access" or "refresh"
     access_token = Column(Text, nullable=True, index=True)  # Only for access tokens
     refresh_token = Column(Text, nullable=True, index=True)  # Only for refresh tokens
-    expires_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     scope = Column(Text, nullable=True)  # JSON string of granted scopes
 
     # Additional indexes for performance optimization

@@ -26,9 +26,9 @@ class PasswordResetToken(BaseModel):
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     token_hash = Column(String(64), unique=True, nullable=False, index=True)  # SHA-256 hash
-    expires_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     is_used = Column(Boolean, default=False, nullable=False)
-    used_at = Column(DateTime, nullable=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
     ip_address = Column(String(45), nullable=True)  # Support both IPv4 and IPv6
     user_agent = Column(String(500), nullable=True)
 

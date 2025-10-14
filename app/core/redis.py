@@ -44,8 +44,21 @@ async def init_redis():
 
 async def get_redis():
     """Get Redis client for dependency injection."""
-    if redis_client is None:
-        await init_redis()
+    global redis_client, redis_pool
+    
+    # Check if client exists and is still valid
+    if redis_client is not None:
+        try:
+            # Test the connection
+            await redis_client.ping()
+            return redis_client
+        except Exception:
+            # Connection is stale, reset and reinitialize
+            redis_client = None
+            redis_pool = None
+    
+    # Initialize new connection
+    await init_redis()
     return redis_client
 
 

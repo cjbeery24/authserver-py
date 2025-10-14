@@ -563,7 +563,7 @@ def create_authorization_server(db_session):
     return server
 
 
-def create_oauth2_token_response_with_id_token(
+async def create_oauth2_token_response_with_id_token(
     db_session,
     client_id: str, 
     grant_type: str, 
@@ -601,7 +601,7 @@ def create_oauth2_token_response_with_id_token(
         if user:
             # Get user roles for inclusion in token
             from app.core.rbac import PermissionChecker
-            user_roles = PermissionChecker.get_user_roles(user.id, db_session)
+            user_roles = await PermissionChecker.get_user_roles(user.id, db_session)
             
             user_data = {
                 "sub": str(user.id),

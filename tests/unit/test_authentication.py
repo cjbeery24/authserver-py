@@ -9,9 +9,11 @@ Tests for:
 """
 
 import pytest
+import json
 from unittest.mock import AsyncMock, patch
 
 from app.core.security import AuthenticationManager, PasswordHasher
+from app.core.cache import RBACCache
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
 
@@ -20,7 +22,6 @@ from app.models.mfa_secret import MFASecret
 
 @pytest.mark.unit
 @pytest.mark.database
-@pytest.mark.asyncio
 class TestAuthenticationManager:
     """Test authentication manager functionality."""
     
@@ -58,7 +59,7 @@ class TestAuthenticationManager:
         """Test authentication with nonexistent user."""
         user, requires_mfa, error = await AuthenticationManager.authenticate_user(
             username="nonexistent",
-            password="S0meP@ssw0rd!",
+            password="Str0ngP@ssw0rd!",
             db_session=db_session,
             redis_client=None,
             client_ip="127.0.0.1"
@@ -225,7 +226,7 @@ class TestCacheMocking:
 class TestCacheTTL:
     """Test cache TTL (Time To Live) functionality."""
     
-    async def test_user_roles_cache_with_custom_ttl(self, clean_redis):
+    async def test_user_roles_cache_with_custom_ttl(self):
         """Test caching user roles with custom TTL."""
         user_id = 123
         roles = [{"id": 1, "name": "user"}]
@@ -238,7 +239,7 @@ class TestCacheTTL:
         cached = await RBACCache.get_user_roles(user_id)
         assert cached is not None
     
-    async def test_permission_check_cache_with_custom_ttl(self, clean_redis):
+    async def test_permission_check_cache_with_custom_ttl(self):
         """Test caching permission checks with custom TTL."""
         user_id = 123
         custom_ttl = 120  # 2 minutes
@@ -261,14 +262,14 @@ class TestCacheTTL:
 class TestCacheInvalidationEdgeCases:
     """Test edge cases in cache invalidation."""
     
-    async def test_invalidate_nonexistent_user(self, clean_redis):
+    async def test_invalidate_nonexistent_user(self):
         """Test invalidating cache for user with no cached data."""
         deleted = await RBACCache.invalidate_user(999)
         
         # Should not error, just return 0
         assert deleted >= 0
     
-    async def test_invalidate_all_users(self, clean_redis):
+    async def test_invalidate_all_users(self):
         """Test invalidating all user caches."""
         # Cache data for multiple users
         await RBACCache.set_user_roles(1, [{"id": 1, "name": "user"}])

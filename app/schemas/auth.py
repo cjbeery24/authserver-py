@@ -107,6 +107,7 @@ class MFARequiredResponse(BaseModel):
     mfa_required: bool = True
     user_id: int
     username: str
+    session_token: str
     message: str
 
     class Config:
@@ -115,7 +116,8 @@ class MFARequiredResponse(BaseModel):
                 "mfa_required": True,
                 "user_id": 1,
                 "username": "johndoe",
-                "message": "Multi-factor authentication required"
+                "session_token": "abc123def456ghi789xyz",
+                "message": "Multi-factor authentication required. Use the session_token with /token/mfa endpoint."
             }
         }
 
@@ -210,6 +212,32 @@ class MFABackupCodeRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "backup_code": "abc123def"
+            }
+        }
+
+
+class MFASessionRequest(BaseModel):
+    """Request model for MFA verification using session token."""
+    session_token: str = Field(..., description="Temporary session token from MFA required response")
+    mfa_token: str = Field(..., min_length=6, max_length=8, description="TOTP token or backup code")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "session_token": "abc123def456ghi789xyz",
+                "mfa_token": "123456"
+            }
+        }
+
+
+class TokenRefreshRequest(BaseModel):
+    """Request model for token refresh."""
+    refresh_token: str = Field(..., description="Refresh token to exchange for new access token")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
             }
         }
 

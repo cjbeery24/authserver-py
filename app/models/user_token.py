@@ -35,9 +35,9 @@ class UserToken(BaseModel):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     token_jti = Column(String(255), unique=True, nullable=False, index=True)  # JWT ID claim
     token_type = Column(String(50), nullable=False, index=True)  # 'access' or 'refresh'
-    expires_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     is_revoked = Column(Boolean, default=False, nullable=False, index=True)
-    revoked_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
     revoked_reason = Column(String(255), nullable=True)
 
     # Audit information

@@ -1079,7 +1079,7 @@ class TokenRotation:
             
             # Get user roles for inclusion in token
             from app.core.rbac import PermissionChecker
-            user_roles = PermissionChecker.get_user_roles(user.id, db_session)
+            user_roles = await PermissionChecker.get_user_roles(user.id, db_session)
             
             # Create new token pair with roles
             user_data = {
@@ -1092,7 +1092,7 @@ class TokenRotation:
             new_tokens = TokenManager.create_token_pair(user_data)
             
             # Store new tokens in database
-            TokenManager.store_user_tokens(
+            SecurityAudit.store_user_tokens(
                 db_session=db_session,
                 user_id=user.id,
                 access_token=new_tokens["access_token"],
@@ -1320,11 +1320,11 @@ class SecurityAudit:
         """Store issued tokens in the database for tracking."""
         from app.models.user_token import UserToken
 
-        access_jti = TokenManager.get_token_jti(access_token)
-        refresh_jti = TokenManager.get_token_jti(refresh_token)
+        access_jti = SecurityAudit.get_token_jti(access_token)
+        refresh_jti = SecurityAudit.get_token_jti(refresh_token)
 
-        access_expiry = TokenManager.get_token_expiry(access_token)
-        refresh_expiry = TokenManager.get_token_expiry(refresh_token)
+        access_expiry = SecurityAudit.get_token_expiry(access_token)
+        refresh_expiry = SecurityAudit.get_token_expiry(refresh_token)
 
         # Store access token record
         if access_jti and access_expiry:
@@ -1746,6 +1746,110 @@ class TokenBlacklist:
         """
         # Redis automatically expires keys, so this is just for logging/metrics
         logger.debug("Token blacklist cleanup completed (Redis handles expiration automatically)")
+
+
+class MFASessionManager:
+    """MFA session management for temporary authentication sessions."""
+
+    # Session TTL in seconds (5 minutes)
+    MFA_SESSION_TTL = 300
+
+    @staticmethod
+    def get_session_key(session_token: str) -> str:
+        """Generate Redis key for MFA session."""
+        return f"mfa_session:{session_token}"
+
+    @staticmethod
+    async def create_mfa_session(user_id: int, username: str, client_ip: str, user_agent: str, redis_client) -> str:
+        """
+        Create a temporary MFA session for user authentication.
+
+        Args:
+            user_id: User ID
+            username: Username
+            client_ip: Client IP address
+            user_agent: User agent string
+            redis_client: Redis client instance
+
+        Returns:
+            Session token string
+        """
+        # Generate secure session token
+        session_token = TokenGenerator.generate_secure_token()
+
+        # Store session data
+        session_data = {
+            "user_id": user_id,
+            "username": username,
+            "client_ip": client_ip,
+            "user_agent": user_agent,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+
+        key = MFASessionManager.get_session_key(session_token)
+
+        try:
+            # Store session in Redis with expiration
+            await redis_client.setex(
+                key,
+                MFASessionManager.MFA_SESSION_TTL,
+                json.dumps(session_data)
+            )
+
+            logger.info(f"Created MFA session for user {user_id} from IP {client_ip}")
+            return session_token
+
+        except Exception as e:
+            logger.error(f"Failed to create MFA session for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    async def get_mfa_session(session_token: str, redis_client) -> Optional[dict]:
+        """
+        Retrieve MFA session data.
+
+        Args:
+            session_token: Session token
+            redis_client: Redis client instance
+
+        Returns:
+            Session data dict or None if not found/expired
+        """
+        key = MFASessionManager.get_session_key(session_token)
+
+        try:
+            session_data = await redis_client.get(key)
+            if session_data:
+                return json.loads(session_data)
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve MFA session {session_token}: {e}")
+            return None
+
+    @staticmethod
+    async def delete_mfa_session(session_token: str, redis_client) -> bool:
+        """
+        Delete MFA session (used after successful MFA verification).
+
+        Args:
+            session_token: Session token
+            redis_client: Redis client instance
+
+        Returns:
+            True if deleted successfully
+        """
+        key = MFASessionManager.get_session_key(session_token)
+
+        try:
+            deleted = await redis_client.delete(key)
+            if deleted:
+                logger.debug(f"Deleted MFA session {session_token}")
+            return deleted > 0
+
+        except Exception as e:
+            logger.error(f"Failed to delete MFA session {session_token}: {e}")
+            return False
 
 
 class TokenSecurityManager:

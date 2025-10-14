@@ -21,7 +21,7 @@ class MFASecret(BaseModel):
     secret = Column(String(32), nullable=False)  # TOTP secret key
     backup_codes = Column(Text, default="{}", nullable=False)  # JSON object of hashed backup codes
     is_enabled = Column(Boolean, default=False, nullable=False)
-    backup_codes_expiry = Column(DateTime, nullable=True)  # When backup codes expire
+    backup_codes_expiry = Column(DateTime(timezone=True), nullable=True)  # When backup codes expire
 
     # Relationships
     user = relationship("User", backref="mfa_secret")
@@ -38,9 +38,9 @@ class MFASecret(BaseModel):
 
     def generate_secret(self):
         """Generate a new TOTP secret."""
-        # Generate 32-character base32 secret
-        alphabet = string.ascii_uppercase + string.digits
-        self.secret = ''.join(secrets.choice(alphabet) for _ in range(32))
+        import pyotp
+        # Generate a valid base32 secret using pyotp
+        self.secret = pyotp.random_base32()
         return self.secret
 
     def generate_backup_codes(self, count=10, code_length=8, expiry_days=365):

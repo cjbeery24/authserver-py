@@ -31,7 +31,7 @@ class PermissionChecker:
     """
     
     @staticmethod
-    def get_user_roles(user_id: int, db: Session, use_cache: bool = True) -> List[Role]:
+    async def get_user_roles(user_id: int, db: Session, use_cache: bool = True) -> List[Role]:
         """
         Get all roles assigned to a user (with optional caching).
         
@@ -46,7 +46,7 @@ class PermissionChecker:
         # Try cache first if enabled
         if use_cache:
             try:
-                cached_roles = asyncio.run(RBACCache.get_user_roles(user_id))
+                cached_roles = await RBACCache.get_user_roles(user_id)
                 if cached_roles is not None:
                     # Convert cached dicts back to Role objects
                     return [Role(id=r['id'], name=r['name'], description=r.get('description')) 
@@ -66,14 +66,14 @@ class PermissionChecker:
             try:
                 roles_data = [{'id': r.id, 'name': r.name, 'description': r.description} 
                              for r in roles]
-                asyncio.run(RBACCache.set_user_roles(user_id, roles_data))
+                await RBACCache.set_user_roles(user_id, roles_data)
             except Exception as e:
                 logger.warning(f"Failed to cache user roles: {e}")
         
         return roles
     
     @staticmethod
-    def get_role_permissions(role_id: int, db: Session, use_cache: bool = True) -> List[Permission]:
+    async def get_role_permissions(role_id: int, db: Session, use_cache: bool = True) -> List[Permission]:
         """
         Get all permissions assigned to a role (with optional caching).
         
@@ -88,7 +88,7 @@ class PermissionChecker:
         # Try cache first if enabled
         if use_cache:
             try:
-                cached_perms = asyncio.run(RBACCache.get_role_permissions(role_id))
+                cached_perms = await RBACCache.get_role_permissions(role_id)
                 if cached_perms is not None:
                     # Convert cached permission dicts back to Permission objects (no DB query!)
                     return [Permission(
@@ -114,14 +114,14 @@ class PermissionChecker:
                     'resource': perm.resource,
                     'action': perm.action
                 } for perm in permissions]
-                asyncio.run(RBACCache.set_role_permissions(role_id, perms_data))
+                await RBACCache.set_role_permissions(role_id, perms_data)
             except Exception as e:
                 logger.warning(f"Failed to cache role permissions: {e}")
         
         return permissions
     
     @staticmethod
-    def get_user_permissions(user_id: int, db: Session, use_cache: bool = True) -> Set[str]:
+    async def get_user_permissions(user_id: int, db: Session, use_cache: bool = True) -> Set[str]:
         """
         Get all permissions for a user (from all their roles) with caching.
         
@@ -136,14 +136,14 @@ class PermissionChecker:
         # Try cache first if enabled
         if use_cache:
             try:
-                cached_perms = asyncio.run(RBACCache.get_user_permissions(user_id))
+                cached_perms = await RBACCache.get_user_permissions(user_id)
                 if cached_perms is not None:
                     return cached_perms
             except Exception as e:
                 logger.warning(f"Cache lookup failed for user permissions, falling back to database: {e}")
         
         # Get user's roles
-        roles = PermissionChecker.get_user_roles(user_id, db, use_cache=use_cache)
+        roles = await PermissionChecker.get_user_roles(user_id, db, use_cache=use_cache)
         
         if not roles:
             return set()
@@ -151,21 +151,21 @@ class PermissionChecker:
         # Get all permissions from all roles
         all_permissions = set()
         for role in roles:
-            permissions = PermissionChecker.get_role_permissions(role.id, db, use_cache=use_cache)
+            permissions = await PermissionChecker.get_role_permissions(role.id, db, use_cache=use_cache)
             for perm in permissions:
                 all_permissions.add(perm.permission_string)
         
         # Cache the result if caching is enabled
         if use_cache and all_permissions:
             try:
-                asyncio.run(RBACCache.set_user_permissions(user_id, all_permissions))
+                await RBACCache.set_user_permissions(user_id, all_permissions)
             except Exception as e:
                 logger.warning(f"Failed to cache user permissions: {e}")
         
         return all_permissions
     
     @staticmethod
-    def has_permission(user_id: int, resource: str, action: str, db: Session, use_cache: bool = True) -> bool:
+    async def has_permission(user_id: int, resource: str, action: str, db: Session, use_cache: bool = True) -> bool:
         """
         Check if a user has a specific permission (with caching).
         
@@ -182,7 +182,7 @@ class PermissionChecker:
         # Try cache first if enabled
         if use_cache:
             try:
-                cached_result = asyncio.run(RBACCache.get_permission_check(user_id, resource, action))
+                cached_result = await RBACCache.get_permission_check(user_id, resource, action)
                 if cached_result is not None:
                     logger.debug(f"Cache HIT: Permission check {resource}:{action} for user {user_id} = {cached_result}")
                     return cached_result
@@ -191,7 +191,7 @@ class PermissionChecker:
         
         # Check permission via user permissions
         permission_string = f"{resource}:{action}"
-        user_permissions = PermissionChecker.get_user_permissions(user_id, db, use_cache=use_cache)
+        user_permissions = await PermissionChecker.get_user_permissions(user_id, db, use_cache=use_cache)
         
         result = permission_string in user_permissions
         
@@ -203,14 +203,14 @@ class PermissionChecker:
         # Cache the result if caching is enabled
         if use_cache:
             try:
-                asyncio.run(RBACCache.set_permission_check(user_id, resource, action, result))
+                await RBACCache.set_permission_check(user_id, resource, action, result)
             except Exception as e:
                 logger.warning(f"Failed to cache permission check: {e}")
         
         return result
     
     @staticmethod
-    def has_any_permission(user_id: int, permissions: List[tuple], db: Session) -> bool:
+    async def has_any_permission(user_id: int, permissions: List[tuple], db: Session, use_cache: bool = True) -> bool:
         """
         Check if a user has any of the specified permissions.
         
@@ -218,11 +218,12 @@ class PermissionChecker:
             user_id: The user's ID
             permissions: List of (resource, action) tuples
             db: Database session
+            use_cache: Whether to use cached results
             
         Returns:
             True if user has at least one permission, False otherwise
         """
-        user_permissions = PermissionChecker.get_user_permissions(user_id, db)
+        user_permissions = await PermissionChecker.get_user_permissions(user_id, db, use_cache=use_cache)
         
         for resource, action in permissions:
             permission_string = f"{resource}:{action}"
@@ -234,7 +235,7 @@ class PermissionChecker:
         return False
     
     @staticmethod
-    def has_all_permissions(user_id: int, permissions: List[tuple], db: Session) -> bool:
+    async def has_all_permissions(user_id: int, permissions: List[tuple], db: Session, use_cache: bool = True) -> bool:
         """
         Check if a user has all of the specified permissions.
         
@@ -242,11 +243,12 @@ class PermissionChecker:
             user_id: The user's ID
             permissions: List of (resource, action) tuples
             db: Database session
+            use_cache: Whether to use cached results
             
         Returns:
             True if user has all permissions, False otherwise
         """
-        user_permissions = PermissionChecker.get_user_permissions(user_id, db)
+        user_permissions = await PermissionChecker.get_user_permissions(user_id, db, use_cache=use_cache)
         
         for resource, action in permissions:
             permission_string = f"{resource}:{action}"
@@ -258,7 +260,7 @@ class PermissionChecker:
         return True
     
     @staticmethod
-    def has_role(user_id: int, role_name: str, db: Session) -> bool:
+    async def has_role(user_id: int, role_name: str, db: Session) -> bool:
         """
         Check if a user has a specific role.
         
@@ -270,7 +272,7 @@ class PermissionChecker:
         Returns:
             True if user has the role, False otherwise
         """
-        roles = PermissionChecker.get_user_roles(user_id, db)
+        roles = await PermissionChecker.get_user_roles(user_id, db)
         role_names = [role.name for role in roles]
         
         result = role_name in role_names
@@ -283,7 +285,7 @@ class PermissionChecker:
         return result
     
     @staticmethod
-    def has_any_role(user_id: int, role_names: List[str], db: Session) -> bool:
+    async def has_any_role(user_id: int, role_names: List[str], db: Session) -> bool:
         """
         Check if a user has any of the specified roles.
         
@@ -295,7 +297,7 @@ class PermissionChecker:
         Returns:
             True if user has at least one role, False otherwise
         """
-        roles = PermissionChecker.get_user_roles(user_id, db)
+        roles = await PermissionChecker.get_user_roles(user_id, db)
         user_role_names = [role.name for role in roles]
         
         for role_name in role_names:
@@ -307,7 +309,7 @@ class PermissionChecker:
         return False
     
     @staticmethod
-    def get_user_permissions_by_resource(user_id: int, resource: str, db: Session) -> Set[str]:
+    async def get_user_permissions_by_resource(user_id: int, resource: str, db: Session) -> Set[str]:
         """
         Get all actions a user can perform on a specific resource.
         
@@ -319,7 +321,7 @@ class PermissionChecker:
         Returns:
             Set of action names (e.g., {"create", "read", "update"})
         """
-        all_permissions = PermissionChecker.get_user_permissions(user_id, db)
+        all_permissions = await PermissionChecker.get_user_permissions(user_id, db)
         
         # Filter permissions for the specified resource
         actions = set()
@@ -353,7 +355,7 @@ def require_permission(resource: str, action: str):
         current_user: User = Depends(get_current_user_or_401),
         db: Session = Depends(get_db)
     ):
-        if not PermissionChecker.has_permission(current_user.id, resource, action, db):
+        if not await PermissionChecker.has_permission(current_user.id, resource, action, db):
             logger.warning(
                 f"Permission denied: User {current_user.id} attempted {action} on {resource}"
             )
@@ -387,7 +389,7 @@ def require_any_permission(*permissions: tuple):
         current_user: User = Depends(get_current_user_or_401),
         db: Session = Depends(get_db)
     ):
-        if not PermissionChecker.has_any_permission(current_user.id, list(permissions), db):
+        if not await PermissionChecker.has_any_permission(current_user.id, list(permissions), db):
             logger.warning(
                 f"Permission denied: User {current_user.id} lacks any of required permissions"
             )
@@ -421,7 +423,7 @@ def require_all_permissions(*permissions: tuple):
         current_user: User = Depends(get_current_user_or_401),
         db: Session = Depends(get_db)
     ):
-        if not PermissionChecker.has_all_permissions(current_user.id, list(permissions), db):
+        if not await PermissionChecker.has_all_permissions(current_user.id, list(permissions), db):
             logger.warning(
                 f"Permission denied: User {current_user.id} lacks all required permissions"
             )
@@ -453,7 +455,7 @@ def require_role(role_name: str):
         current_user: User = Depends(get_current_user_or_401),
         db: Session = Depends(get_db)
     ):
-        if not PermissionChecker.has_role(current_user.id, role_name, db):
+        if not await PermissionChecker.has_role(current_user.id, role_name, db):
             logger.warning(
                 f"Role check failed: User {current_user.id} attempted access requiring role '{role_name}'"
             )
@@ -485,7 +487,7 @@ def require_any_role(*role_names: str):
         current_user: User = Depends(get_current_user_or_401),
         db: Session = Depends(get_db)
     ):
-        if not PermissionChecker.has_any_role(current_user.id, list(role_names), db):
+        if not await PermissionChecker.has_any_role(current_user.id, list(role_names), db):
             logger.warning(
                 f"Role check failed: User {current_user.id} lacks any of required roles"
             )
@@ -500,7 +502,7 @@ def require_any_role(*role_names: str):
 
 # ==================== UTILITY FUNCTIONS ====================
 
-def check_user_permission(user: User, resource: str, action: str, db: Session) -> bool:
+async def check_user_permission(user: User, resource: str, action: str, db: Session) -> bool:
     """
     Convenience function to check if a user has a specific permission.
     
@@ -513,10 +515,10 @@ def check_user_permission(user: User, resource: str, action: str, db: Session) -
     Returns:
         True if user has permission, False otherwise
     """
-    return PermissionChecker.has_permission(user.id, resource, action, db)
+    return await PermissionChecker.has_permission(user.id, resource, action, db)
 
 
-def get_user_resource_actions(user: User, resource: str, db: Session) -> Set[str]:
+async def get_user_resource_actions(user: User, resource: str, db: Session) -> Set[str]:
     """
     Get all actions a user can perform on a resource.
     
@@ -528,10 +530,10 @@ def get_user_resource_actions(user: User, resource: str, db: Session) -> Set[str
     Returns:
         Set of action names
     """
-    return PermissionChecker.get_user_permissions_by_resource(user.id, resource, db)
+    return await PermissionChecker.get_user_permissions_by_resource(user.id, resource, db)
 
 
-def enforce_permission(user: User, resource: str, action: str, db: Session) -> None:
+async def enforce_permission(user: User, resource: str, action: str, db: Session) -> None:
     """
     Enforce that a user has a specific permission, raising an exception if not.
     
@@ -544,7 +546,7 @@ def enforce_permission(user: User, resource: str, action: str, db: Session) -> N
     Raises:
         HTTPException: If user lacks the required permission
     """
-    if not PermissionChecker.has_permission(user.id, resource, action, db):
+    if not await PermissionChecker.has_permission(user.id, resource, action, db):
         logger.warning(
             f"Permission denied: User {user.id} ({user.username}) attempted {action} on {resource}"
         )

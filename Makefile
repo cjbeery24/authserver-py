@@ -1,72 +1,166 @@
-.PHONY: help install install-dev add add-dev remove remove-dev update update-dev clean test run docker-up docker-down
+# Authentication Server - Development Makefile
 
-help: ## Show this help message
-	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+.PHONY: help install dev test test-unit test-integration test-docker clean lint format security-check docker-build docker-up docker-down migrate
 
-install: ## Install production dependencies
-	poetry install --only main
+# Default target
+help:
+	@echo "🔐 Authentication Server - Available Commands"
+	@echo ""
+	@echo "📦 Setup & Installation:"
+	@echo "  make install          Install dependencies with Poetry"
+	@echo "  make dev              Set up development environment"
+	@echo ""
+	@echo "🧪 Testing:"
+	@echo "  make test             Run all tests (local SQLite)"
+	@echo "  make test-unit        Run unit tests only"
+	@echo "  make test-integration Run integration tests only"
+	@echo "  make test-docker      Run all tests in Docker (PostgreSQL)"
+	@echo "  make test-docker-unit Run unit tests in Docker"
+	@echo "  make test-docker-int  Run integration tests in Docker"
+	@echo ""
+	@echo "🐳 Docker:"
+	@echo "  make docker-build     Build Docker images"
+	@echo "  make docker-up        Start development services"
+	@echo "  make docker-down      Stop all services"
+	@echo "  make docker-test-up   Start test services"
+	@echo "  make docker-test-down Stop test services"
+	@echo ""
+	@echo "🗄️  Database:"
+	@echo "  make migrate          Run database migrations"
+	@echo "  make migrate-test     Run migrations on test database"
+	@echo ""
+	@echo "🔍 Code Quality:"
+	@echo "  make lint             Run linting checks"
+	@echo "  make format           Format code with black and isort"
+	@echo "  make security-check   Run security vulnerability checks"
+	@echo ""
+	@echo "🧹 Cleanup:"
+	@echo "  make clean            Clean up temporary files and caches"
 
-install-dev: ## Install all dependencies (including dev)
-	poetry install
+# Installation and setup
+install:
+	@echo "📦 Installing dependencies..."
+	poetry install --with dev
 
-add: ## Add a production dependency (usage: make add package=package-name)
-	poetry add $(package)
+dev: install
+	@echo "🛠️  Setting up development environment..."
+	@echo "Creating .env file if it doesn't exist..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "✅ Created .env file from .env.example"; \
+		echo "⚠️  Please update .env with your configuration"; \
+	else \
+		echo "✅ .env file already exists"; \
+	fi
+	@echo "🔑 Generating RSA keys..."
+	poetry run python scripts/generate_rsa_keys.py
+	@echo "✅ Development environment ready!"
 
-add-dev: ## Add a development dependency (usage: make add-dev package=package-name)
-	poetry add --group dev $(package)
+# Local testing (SQLite)
+test:
+	@echo "🧪 Running all tests (local SQLite)..."
+	poetry run pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
 
-remove: ## Remove a dependency (usage: make remove package=package-name)
-	poetry remove $(package)
+test-unit:
+	@echo "🧪 Running unit tests..."
+	poetry run pytest tests/unit/ -v --tb=short --cov=app --cov-report=term-missing
 
-remove-dev: ## Remove a development dependency (usage: make remove-dev package=package-name)
-	poetry remove --group dev $(package)
+test-integration:
+	@echo "🧪 Running integration tests..."
+	poetry run pytest tests/integration/ -v --tb=short --cov=app --cov-report=term-missing
 
-update: ## Update all dependencies
-	poetry update
+# Docker-based testing (PostgreSQL)
+test-docker:
+	@echo "🐳 Running all tests in Docker..."
+	./scripts/test.sh
 
-update-dev: ## Update development dependencies only
-	poetry update --only dev
+test-docker-unit:
+	@echo "🐳 Running unit tests in Docker..."
+	./scripts/test.sh --unit
 
-lock: ## Regenerate poetry.lock file
-	poetry lock
+test-docker-int:
+	@echo "🐳 Running integration tests in Docker..."
+	./scripts/test.sh --integration
 
-show: ## Show dependency tree
-	poetry show --tree
+test-docker-rebuild:
+	@echo "🐳 Running tests in Docker (rebuilding images)..."
+	./scripts/test.sh --rebuild
 
-show-outdated: ## Show outdated dependencies
-	poetry show --outdated
+# Docker services
+docker-build:
+	@echo "🐳 Building Docker images..."
+	docker compose build
 
-clean: ## Clean up Python cache files
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-	find . -type f -name "*.pyo" -delete 2>/dev/null || true
-	find . -type f -name "*.pyd" -delete 2>/dev/null || true
-	find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".coverage" -delete 2>/dev/null || true
-	find . -type d -name "htmlcov" -exec rm -rf {} + 2>/dev/null || true
+docker-up:
+	@echo "🐳 Starting development services..."
+	docker compose up -d
+	@echo "✅ Services started. Check with: docker compose ps"
 
-test: ## Run tests
-	poetry run pytest
+docker-down:
+	@echo "🐳 Stopping all services..."
+	docker compose down --volumes
 
-run: ## Run the application
-	poetry run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+docker-test-up:
+	@echo "🐳 Starting test services..."
+	docker compose -f docker-compose.test.yml up -d postgres-test redis-test
+	@echo "✅ Test services started"
 
-docker-up: ## Start Docker services
-	./scripts/dev.sh up
+docker-test-down:
+	@echo "🐳 Stopping test services..."
+	docker compose -f docker-compose.test.yml down --volumes
 
-docker-down: ## Stop Docker services
-	./scripts/dev.sh down
+# Database migrations
+migrate:
+	@echo "🗄️  Running database migrations..."
+	poetry run alembic upgrade head
 
-docker-restart: ## Restart Docker services
-	./scripts/dev.sh restart
+migrate-test:
+	@echo "🗄️  Running migrations on test database..."
+	DATABASE_URL="postgresql://testuser:testpass@localhost:5433/authserver_test" poetry run alembic upgrade head
 
-docker-logs: ## Show Docker logs
-	./scripts/dev.sh logs
+# Code quality
+lint:
+	@echo "🔍 Running linting checks..."
+	poetry run flake8 app tests
+	poetry run mypy app
+	poetry run bandit -r app -f json -o bandit-report.json || true
 
-docker-status: ## Show Docker status
-	./scripts/dev.sh status
+format:
+	@echo "🎨 Formatting code..."
+	poetry run black app tests
+	poetry run isort app tests
 
-docker-clean: ## Clean up Docker environment
-	./scripts/dev.sh clean
+security-check:
+	@echo "🔒 Running security checks..."
+	poetry run safety check
+	poetry run bandit -r app
+
+# Cleanup
+clean:
+	@echo "🧹 Cleaning up..."
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	rm -rf .pytest_cache
+	rm -rf htmlcov
+	rm -rf .coverage
+	rm -rf dist
+	rm -rf build
+	@echo "✅ Cleanup complete"
+
+# Development server
+run:
+	@echo "🚀 Starting development server..."
+	poetry run python run.py
+
+run-prod:
+	@echo "🚀 Starting production server..."
+	poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Quick development workflow
+dev-test: format lint test
+	@echo "✅ Development workflow complete!"
+
+# CI/CD workflow
+ci: install lint security-check test-docker
+	@echo "✅ CI workflow complete!"

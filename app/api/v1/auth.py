@@ -21,6 +21,7 @@ from app.core.security import (
     FailedRefreshTracker,
     TokenGenerator,
     TokenBlacklist,
+    MFASessionManager,
     SecureTokenHasher,
     AuthenticationManager
 )
@@ -43,8 +44,10 @@ from app.schemas.auth import (
     TokenResponse,
     UserResponse,
     MFATokenRequest,
+    MFASessionRequest,
     MFARequiredResponse,
-    LogoutResponse
+    LogoutResponse,
+    TokenRefreshRequest
 )
 from app.schemas.password_reset import (
     PasswordResetRequest,
@@ -177,7 +180,7 @@ async def _create_token_response(
     """
     # Get user roles for inclusion in token
     from app.core.rbac import PermissionChecker
-    user_roles = PermissionChecker.get_user_roles(user.id, db)
+    user_roles = await PermissionChecker.get_user_roles(user.id, db)
     
     token_data = {
         "sub": str(user.id),
@@ -206,7 +209,7 @@ async def _create_token_response(
             logger.warning(f"Failed to blacklist old refresh token for user {user.id}")
 
     # Store new tokens in database for tracking
-    TokenManager.store_user_tokens(
+    SecurityAudit.store_user_tokens(
         db_session=db,
         user_id=user.id,
         access_token=tokens["access_token"],
@@ -291,7 +294,7 @@ async def register_user(
         db.refresh(new_user)
 
         # Optionally create MFA secret for the user
-        if settings.mfa_enabled_by_default:
+        if getattr(settings, 'mfa_enabled_by_default', False):
             try:
                 mfa_secret = MFASecret.create_for_user(
                     db_session=db,
@@ -346,13 +349,23 @@ async def login_for_access_token(
         redis_client=redis_client
     )
 
-    # If MFA is required, return MFA challenge
+    # If MFA is required, create session token and return MFA challenge
     if requires_mfa:
+        # Create temporary MFA session
+        session_token = await MFASessionManager.create_mfa_session(
+            user_id=user.id,
+            username=user.username,
+            client_ip=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get('User-Agent'),
+            redis_client=redis_client
+        )
+
         return MFARequiredResponse(
             mfa_required=True,
             user_id=user.id,
             username=user.username,
-            message="Multi-factor authentication required. Use /token/mfa endpoint with MFA token."
+            session_token=session_token,
+            message="Multi-factor authentication required. Use the session_token with /token/mfa endpoint."
         )
 
     # Log successful login
@@ -382,35 +395,65 @@ async def login_for_access_token(
             ])
 async def verify_mfa_token(
     request: Request,
-    mfa_data: MFATokenRequest,
+    mfa_data: MFASessionRequest,
     db: Session = Depends(get_db),
     redis_client = Depends(get_redis_dependency)
 ):
     """
-    Verify MFA token and complete authentication.
+    Verify MFA token using session token and complete authentication.
 
-    - Validates username/password
+    - Validates session token from MFA challenge
     - Verifies MFA token (TOTP or backup code)
     - Returns access and refresh tokens
     """
-    # Authenticate user with MFA token
-    user, requires_mfa = await _authenticate_user(
-        request=request,
-        username=mfa_data.username,
-        password=mfa_data.password,
-        db=db,
-        redis_client=redis_client,
-        mfa_token=mfa_data.mfa_token
-    )
+    # Get client IP for validation
+    client_ip = request.client.host if request.client else "unknown"
 
-    # Check if MFA was actually enabled for this user
+    # Retrieve and validate MFA session
+    session_data = await MFASessionManager.get_mfa_session(mfa_data.session_token, redis_client)
+    if not session_data:
+        logger.warning(f"Invalid or expired MFA session token attempt from IP: {client_ip}")
+        raise AuthError.invalid_session_token()
+
+    # Validate client IP matches session (basic security check)
+    if session_data.get("client_ip") != client_ip:
+        logger.warning(f"MFA session IP mismatch: session={session_data.get('client_ip')}, request={client_ip}")
+        # Don't reveal the mismatch for security, just treat as invalid session
+        raise AuthError.invalid_session_token()
+
+    user_id = session_data.get("user_id")
+    if not user_id:
+        logger.error(f"Invalid MFA session data: missing user_id")
+        raise AuthError.invalid_session_token()
+
+    # Get user from database
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    if not user:
+        logger.warning(f"MFA session for inactive/non-existent user {user_id} from IP: {client_ip}")
+        raise AuthError.invalid_session_token()
+
+    # Check if MFA is still enabled for this user
     mfa_secret = db.query(MFASecret).filter(
         MFASecret.user_id == user.id,
         MFASecret.is_enabled == True
     ).first()
 
     if not mfa_secret:
+        logger.warning(f"MFA verification attempt for user {user_id} without MFA enabled from IP: {client_ip}")
         raise AuthError.mfa_not_enabled()
+
+    # Verify MFA token using the AuthenticationManager (handles TOTP and backup codes)
+    mfa_valid = await AuthenticationManager._verify_mfa_token(mfa_secret, mfa_data.mfa_token, db)
+    if not mfa_valid:
+        # Record failed MFA attempt for progressive rate limiting
+        if settings.auth_rate_limit_enabled:
+            await FailedLoginTracker.record_failed_attempt(client_ip, redis_client)
+
+        logger.warning(f"Invalid MFA token for user {user.id} from IP: {client_ip}")
+        raise AuthError.invalid_mfa_token()
+
+    # MFA verification successful - delete the session token
+    await MFASessionManager.delete_mfa_session(mfa_data.session_token, redis_client)
 
     # Log successful MFA login
     AuditLog.log_event(
@@ -419,18 +462,18 @@ async def verify_mfa_token(
         action="login_mfa",
         resource="user",
         resource_id=str(user.id),
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip,
         user_agent=request.headers.get('User-Agent'),
         success=True,
         details={"event_type": "authentication", "method": "mfa"}
     )
     db.commit()
-    
+
     # Authentication successful, return tokens
     return await _create_token_response(
         user=user,
         db=db,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip,
         user_agent=request.headers.get('User-Agent'),
         redis_client=redis_client
     )
@@ -443,7 +486,7 @@ async def verify_mfa_token(
             ])
 async def refresh_access_token(
     request: Request,
-    refresh_token: str,
+    refresh_data: TokenRefreshRequest,
     db: Session = Depends(get_db),
     redis_client = Depends(get_redis_dependency)
 ):
@@ -459,7 +502,7 @@ async def refresh_access_token(
     client_ip = request.client.host if request.client else "unknown"
 
     # Validate refresh token (now checks blacklist)
-    payload = await TokenManager.verify_token(refresh_token, "refresh", redis_client)
+    payload = await TokenManager.verify_token(refresh_data.refresh_token, "refresh", redis_client)
     if not payload:
         # Record failed refresh attempt
         if settings.auth_rate_limit_enabled:
@@ -485,7 +528,7 @@ async def refresh_access_token(
         db=db,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get('User-Agent'),
-        old_refresh_token=refresh_token,  # Blacklist the used refresh token
+        old_refresh_token=refresh_data.refresh_token,  # Blacklist the used refresh token
         redis_client=redis_client
     )
 

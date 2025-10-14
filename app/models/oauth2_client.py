@@ -29,7 +29,7 @@ class OAuth2Client(BaseModel):
     redirect_uris = Column(Text, nullable=False)  # JSON string of redirect URIs
     scopes = Column(Text, nullable=False)  # JSON string of allowed scopes
     is_active = Column(Boolean, default=True, nullable=False, index=True)
-    secret_last_rotated = Column(DateTime, nullable=True)  # Track when secret was last rotated
+    secret_last_rotated = Column(DateTime(timezone=True), nullable=True)  # Track when secret was last rotated
 
     # Relationship to tokens (optional - can be added later if needed)
     # tokens = relationship("OAuth2Token", back_populates="client")

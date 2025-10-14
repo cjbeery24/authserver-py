@@ -1,0 +1,136 @@
+services:
+  # Test database - separate from development
+  postgres-test:
+    image: postgres:17-alpine
+    container_name: authserver_postgres_test
+    environment:
+      POSTGRES_DB: authserver_test
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+    ports:
+      - "5433:5432" # Different port to avoid conflicts
+    volumes:
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d authserver_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: >
+      postgres
+      -c fsync=off
+      -c synchronous_commit=off
+      -c full_page_writes=off
+      -c max_wal_size=1GB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c shared_buffers=256MB
+
+  # Test Redis - separate from development
+  redis-test:
+    image: redis:7-alpine
+    container_name: authserver_redis_test
+    ports:
+      - "6380:6379" # Different port to avoid conflicts
+    command: redis-server --save "" --appendonly no # Disable persistence for speed
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Test runner service
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: authserver_test_runner
+    environment:
+      # Test database configuration
+      DATABASE_URL: "postgresql://testuser:testpass@postgres-test:5432/authserver_test"
+      DATABASE_HOST: postgres-test
+      DATABASE_PORT: 5432
+      DATABASE_NAME: authserver_test
+      DATABASE_USER: testuser
+      DATABASE_PASSWORD: testpass
+
+      # Test Redis configuration
+      REDIS_URL: "redis://redis-test:6379/0"
+      REDIS_HOST: redis-test
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+
+      # Test-specific settings
+      APP_ENV: testing
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+
+      # Required secrets (use test values)
+      JWT_SECRET_KEY: "test-secret-key-for-testing-only-not-secure"
+      JWT_ALGORITHM: "RS256"
+      JWT_KEY_ID: "test-key-1"
+      JWT_PRIVATE_KEY: |
+        -----BEGIN PRIVATE KEY-----
+        MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDJK5puzuK7enxV
+        qjwVgRw4tew/+UayvMDiMLhdwrrWMUDC5bgXJCirNYxysRoUW55wPhkaNG/+UcCd
+        LPh/EYmhhYIM8cF4VADaVIUKG3tVBWapVydk6mdl76YRk3a/ENshAUBvZe8/SAOK
+        zXQsloklP+m8eO6Ay468V5Pmnvquyz//kzwlcUH9UmK+LqBiN7IvTLi/NaKBakNR
+        X61uQP/4MUy4kxJKW6SDDUfCLBJprhVPZ1eGmOR3USjld0Oy3zGK11sCAA/1exIP
+        1TRrarNbrfYMVRhog3hIU4043BzlhyQUaW92iNIt93+vHA7M9nH4La5yATRNOtEr
+        CzoGewqpAgMBAAECggEAEIPzRedXeymFQWGsVN4gh2HdG0vvY09mfPNfwXfSD7Fj
+        thR2snSqH5Mx/H0AbX0vktqwRCPbsWr8B5NYc9MoY9GygXZMCkFIQCRp9zBWJd7f
+        hKXGcs0hL7/W2BDNkgZT3R/tjq+1TnJOsyOmpt31dLDMc0gQ2ZNMnLcKagexgC3D
+        dt/5+7YxwTJJCYbxRitLWAtynYiaBZewzg1/dWI9V3oUREw5GzRkAn3X3fMqKeRp
+        S/G8rEi+eQuO5HtVy6T/wsf/S5vRceJZL9JJFskudPhd3KMAEBQryN+JuOMjBHfH
+        SFqcQBVFK444GvJDhVD3m8LroTmjTDgo6xyhdv2H4QKBgQDxG5Ya/oV83nsah7cb
+        mf5wecGPlW648jV9XaHkzxMfTH4MkIq89202viZkPuyogpJF/EiOc3pCpOP5nhec
+        h+oNWgVttueaMrDTwOLhSQvt5eV8DrnVDuj3bXk6wiK/KRsrhnWpgf4XnOpDLiMT
+        CpSytCR3btCvevTUC7bSfa5KoQKBgQDVmIX0FyhRTByZ+HuJanglNdL5xinIGGHL
+        iYQIU1m8Z3lJQxCKHiWnRQZeraJjI0Cm3tUT9AYfOVjjgVblnKwlUDd6QD9ug1uA
+        tGCUHRsMCc1QXRhJ6xTF/7faAX4swMd0uhaMrVrVRHhx7DUAaxosDBwiHKBWY8gx
+        FD28FbWLCQKBgHMKfJaotryb0xUXiFDNK1AzaB3AaTIpr0f/8w0fmLooX0RTez8q
+        t5uVIvBV7cmBc5WdCGmfw8gksPobapyvZQe12j09NkimwyRmNlrT5bM/LD4DMLvt
+        /05/l4ZntviK/oHICEA23CwcHNKtIuMk+0pBFd0+rKft/P9oD3VjrlPBAoGBAMtv
+        CG4RvEmp9zfCjU61BBdUq0tPrK2yYzprEECpujcSSlc3s8IIso4c1NNKBvbrNYF5
+        jHIDoe0NPpb4sh3g2ah0PVKHbKLCI11y7uVCz2bo0w6ujBqi9tcaFi5h652OQqnv
+        LtjvpyqmmxzN/zEV0QiQxB7NKvz87keoYqAIAS+ZAoGAYuw2nChN5MAiXo3vWGBF
+        g66DVadAVkE+X6a7CR/1rVBZ/Gq5XRPVrxzQKraIiewy58ux5v4LNwWeIfaMToi+
+        wzLVQHbM/fiQn4P7iPM3d1dsyv85vvl7QYfunuyyB6JqPpku9W3cI85cq8ZiRELG
+        8XGbeBmpY7iMpemrFU2UyO0=
+        -----END PRIVATE KEY-----
+      JWT_PUBLIC_KEY: |
+        -----BEGIN PUBLIC KEY-----
+        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAySuabs7iu3p8Vao8FYEc
+        OLXsP/lGsrzA4jC4XcK61jFAwuW4FyQoqzWMcrEaFFuecD4ZGjRv/lHAnSz4fxGJ
+        oYWCDPHBeFQA2lSFCht7VQVmqVcnZOpnZe+mEZN2vxDbIQFAb2XvP0gDis10LJaJ
+        JT/pvHjugMuOvFeT5p76rss//5M8JXFB/VJivi6gYjeyL0y4vzWigWpDUV+tbkD/
+        +DFMuJMSSlukgw1HwiwSaa4VT2dXhpjkd1Eo5XdDst8xitdbAgAP9XsSD9U0a2qz
+        W632DFUYaIN4SFONONwc5YckFGlvdojSLfd/rxwOzPZx+C2ucgE0TTrRKws6BnsK
+        qQIDAQAB
+        -----END PUBLIC KEY-----
+
+      # Disable external services for testing
+      EMAIL_ENABLED: "false"
+
+      # Test rate limits (more permissive)
+      AUTH_LOGIN_PER_MINUTE: 100
+      AUTH_REGISTRATION_PER_HOUR: 100
+
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/.pytest_cache # Don't mount pytest cache
+    working_dir: /app
+    command: >
+      sh -c "
+        echo 'Waiting for services to be ready...' &&
+        sleep 2 &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Running tests...' &&
+        pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-report=html
+      "
