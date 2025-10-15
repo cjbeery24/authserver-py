@@ -81,16 +81,18 @@ class RSAKeyManager:
     def get_verification_key() -> str:
         """
         Get the appropriate verification key based on algorithm.
-        
+
         Returns:
             Verification key (public key for RS256, secret for HS256)
         """
         if settings.jwt_algorithm.startswith('RS'):
             if not settings.jwt_public_key:
                 raise ValueError("JWT_PUBLIC_KEY environment variable is required for RS256 algorithm")
+            logger.debug(f"Using RS256 verification key, length: {len(settings.jwt_public_key)}")
             return settings.jwt_public_key
         else:
             # Fall back to HMAC for backward compatibility
+            logger.debug("Using HS256 verification key")
             return settings.jwt_secret_key
     
     @staticmethod
@@ -477,8 +479,8 @@ class TokenManager:
             "iss": settings.oidc_issuer_url,  # Issuer
             "sub": str(user_data.get("sub", user_data.get("user_id"))),  # Subject (user ID)
             "aud": client_id,  # Audience (client ID)
-            "exp": expire,  # Expiration time
-            "iat": now,  # Issued at
+            "exp": int(expire.timestamp()),  # Expiration time
+            "iat": int(now.timestamp()),  # Issued at
             "type": "id_token"  # Token type for our internal use
         }
         
@@ -533,7 +535,7 @@ class TokenManager:
         else:
             expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_access_token_expire_minutes)
 
-        to_encode.update({"exp": expire, "type": "access"})
+        to_encode.update({"exp": int(expire.timestamp()), "type": "access"})
 
         # Include JTI (JWT ID) for token tracking if requested
         if include_jti:
@@ -564,7 +566,7 @@ class TokenManager:
         else:
             expire = datetime.now(timezone.utc) + timedelta(days=settings.jwt_refresh_token_expire_days)
 
-        to_encode.update({"exp": expire, "type": "refresh"})
+        to_encode.update({"exp": int(expire.timestamp()), "type": "refresh"})
 
         # Include JTI (JWT ID) for token tracking if requested
         if include_jti:
@@ -638,8 +640,12 @@ class TokenManager:
         try:
             # Use appropriate verification key
             verification_key = RSAKeyManager.get_verification_key()
+            logger.debug(f"Verifying JWT token with algorithm: {settings.jwt_algorithm}")
             payload = jwt.decode(token, verification_key, algorithms=[settings.jwt_algorithm])
+            logger.debug(f"JWT decoded successfully, token type: {payload.get('type')}")
+            logger.debug(f"Token payload: {payload}")
             if payload.get("type") != token_type:
+                logger.warning(f"Token type mismatch: expected {token_type}, got {payload.get('type')}")
                 return None
 
             # Check if token is blacklisted by JTI (if redis client is provided)

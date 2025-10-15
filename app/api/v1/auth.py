@@ -64,7 +64,6 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 # Logger
 logger = logging.getLogger(__name__)
 
-
 # Custom rate limiting dependency that uses FailedLoginTracker
 async def progressive_rate_limit(
     request: Request,
@@ -87,7 +86,6 @@ async def progressive_rate_limit(
         penalty_duration = await FailedLoginTracker.get_penalty_duration(client_ip, redis_client)
         raise AuthError.too_many_login_attempts(failed_count, penalty_duration)
 
-
 # Custom progressive rate limiting for refresh token attempts
 async def progressive_refresh_rate_limit(
     request: Request,
@@ -109,7 +107,6 @@ async def progressive_refresh_rate_limit(
         failed_count = await FailedRefreshTracker.get_failed_attempts(client_ip, redis_client)
         penalty_duration = await FailedRefreshTracker.get_penalty_duration(client_ip, redis_client)
         raise AuthError.too_many_refresh_attempts(failed_count, penalty_duration)
-
 
 # Helper function for authentication logic (now uses centralized AuthenticationManager)
 async def _authenticate_user(
@@ -157,7 +154,6 @@ async def _authenticate_user(
     
     # Return user and MFA requirement status
     return user, requires_mfa
-
 
 async def _create_token_response(
     user: User, 
@@ -227,7 +223,6 @@ async def _create_token_response(
         username=user.username
     )
 
-
 async def _revoke_token_in_db(token: str, db: Session, reason: str = "logout", ip_address: str = None, user_agent: str = None) -> bool:
     """Revoke a token in the database by its JTI for audit purposes."""
     jti = SecurityAudit.get_token_jti(token)
@@ -244,7 +239,6 @@ async def _revoke_token_in_db(token: str, db: Session, reason: str = "logout", i
         db.commit()
         return True
     return False
-
 
 @router.post("/register", response_model=UserRegistrationResponse, status_code=status.HTTP_201_CREATED,
             dependencies=[Depends(RateLimiter(times=settings.auth_registration_per_hour, hours=1))])
@@ -318,9 +312,9 @@ async def register_user(
         )
 
     except Exception as e:
+        logger.error(f"User registration failed: {str(e)}", exc_info=True)
         db.rollback()
         raise AuthError.registration_failed()
-
 
 @router.post("/token", response_model=Union[TokenResponse, MFARequiredResponse],
             dependencies=[
@@ -386,7 +380,6 @@ async def login_for_access_token(
         user_agent=request.headers.get('User-Agent'),
         redis_client=redis_client
     )
-
 
 @router.post("/token/mfa", response_model=TokenResponse,
             dependencies=[
@@ -478,7 +471,6 @@ async def verify_mfa_token(
         redis_client=redis_client
     )
 
-
 @router.post("/refresh", response_model=TokenResponse,
             dependencies=[
                 Depends(RateLimiter(times=settings.auth_token_refresh_per_hour, hours=1)),
@@ -486,49 +478,54 @@ async def verify_mfa_token(
             ])
 async def refresh_access_token(
     request: Request,
-    refresh_data: TokenRefreshRequest,
     db: Session = Depends(get_db),
-    redis_client = Depends(get_redis_dependency)
+    redis_client = Depends(get_redis_dependency),
+    current_user: User = Depends(get_current_user_or_401),
+    raw_token: str = Depends(get_raw_token_or_401)
 ):
     """
-    Refresh an access token using a valid refresh token.
+    Refresh an access token using a valid refresh token provided in the Authorization header.
 
-    - Validates refresh token with progressive rate limiting
-    - Issues new access token
-    - Maintains user session
+    - Validates refresh token type (must be 'refresh')
+    - Issues new access and refresh tokens
+    - Blacklists the old refresh token (token rotation)
     - Tracks failed refresh attempts for security
     """
     # Get client IP for failed refresh tracking
     client_ip = request.client.host if request.client else "unknown"
 
-    # Validate refresh token (now checks blacklist)
-    payload = await TokenManager.verify_token(refresh_data.refresh_token, "refresh", redis_client)
-    if not payload:
+    # Get token payload from middleware
+    token_data = getattr(request.state, 'token_data', None)
+    if not token_data:
         # Record failed refresh attempt
         if settings.auth_rate_limit_enabled:
             await FailedRefreshTracker.record_failed_attempt(client_ip, redis_client)
-        
-        logger.warning(f"Failed refresh token attempt from IP: {client_ip}")
+        logger.warning(f"Missing token data for refresh attempt from IP: {client_ip}")
         raise AuthError.invalid_refresh_token()
 
-    # Token revocation is now checked in verify_token() via Redis blacklist
+    # Verify token is a refresh token
+    if token_data.get('type') != 'refresh':
+        # Record failed refresh attempt
+        if settings.auth_rate_limit_enabled:
+            await FailedRefreshTracker.record_failed_attempt(client_ip, redis_client)
+        logger.warning(f"Non-refresh token used for refresh attempt from IP: {client_ip}")
+        raise AuthError.invalid_refresh_token()
 
-    user_id = int(payload.get("sub"))
-    if not user_id:
-        raise AuthError.invalid_token_payload()
-
-    # Verify user still exists and is active
-    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
-    if not user:
+    # Verify user still exists and is active (user is already fetched by middleware)
+    if not current_user.is_active:
+        # Record failed refresh attempt
+        if settings.auth_rate_limit_enabled:
+            await FailedRefreshTracker.record_failed_attempt(client_ip, redis_client)
+        logger.warning(f"Refresh attempt for inactive user {current_user.id} from IP: {client_ip}")
         raise AuthError.user_not_found()
 
     # Create new token pair with token rotation (blacklist old refresh token)
     token_response = await _create_token_response(
-        user=user,
+        user=current_user,
         db=db,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip,
         user_agent=request.headers.get('User-Agent'),
-        old_refresh_token=refresh_data.refresh_token,  # Blacklist the used refresh token
+        old_refresh_token=raw_token,  # Blacklist the used refresh token
         redis_client=redis_client
     )
 
@@ -536,10 +533,9 @@ async def refresh_access_token(
     if settings.auth_rate_limit_enabled:
         await FailedRefreshTracker.reset_failed_attempts(client_ip, redis_client)
 
-    logger.info(f"Token refresh successful for user {user_id} from IP: {client_ip} (old token blacklisted)")
+    logger.info(f"Token refresh successful for user {current_user.id} from IP: {client_ip} (old token blacklisted)")
 
     return token_response
-
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user(
@@ -560,7 +556,6 @@ async def get_current_user(
         is_active=current_user.is_active,
         created_at=current_user.created_at.isoformat() if current_user.created_at else None
     )
-
 
 @router.post("/logout", response_model=LogoutResponse,
             dependencies=[Depends(RateLimiter(times=30, minutes=1))])
@@ -585,7 +580,6 @@ async def logout(
     try:
         # User is already validated by middleware
         user_id = current_user.id
-
 
         # Blacklist the access token in Redis for immediate effect
         token_blacklisted = await TokenBlacklist.blacklist_token(token, redis_client)
@@ -634,7 +628,6 @@ async def logout(
             success=True,
             tokens_invalidated=0
         )
-
 
 @router.post("/logout-all", response_model=LogoutResponse,
             dependencies=[Depends(RateLimiter(times=10, minutes=1))])
@@ -709,7 +702,6 @@ async def logout_all_devices(
             success=True,
             tokens_invalidated=0
         )
-
 
 @router.post("/password-reset/request", response_model=PasswordResetResponse,
             dependencies=[Depends(RateLimiter(times=3, hours=1))])
@@ -814,7 +806,6 @@ async def request_password_reset(
             email_sent=False
         )
 
-
 @router.post("/password-reset/confirm", response_model=PasswordResetConfirmResponse,
             dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def confirm_password_reset(
@@ -901,7 +892,6 @@ async def confirm_password_reset(
             raise AuthError.password_validation_failed(str(e))
         
         raise AuthError.password_reset_failed()
-
 
 @router.post("/admin/cleanup-tokens", response_model=dict,
             dependencies=[Depends(RateLimiter(times=5, hours=1))])

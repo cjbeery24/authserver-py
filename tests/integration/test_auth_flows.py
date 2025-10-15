@@ -30,7 +30,7 @@ from app.core.security import PasswordHasher
 class TestUserRegistrationFlow:
     """Test complete user registration flow."""
     
-    def test_successful_registration(self, client: TestClient, db_session: Session):
+    def test_successful_registration(self, integration_client: TestClient, db_session: Session):
         """Test successful user registration with valid data."""
         registration_data = {
             "username": "newuser",
@@ -38,7 +38,7 @@ class TestUserRegistrationFlow:
             "password": "Str0ngP@ssw0rd!"
         }
         
-        response = client.post("/api/v1/auth/register", json=registration_data)
+        response = integration_client.post("/api/v1/auth/register", json=registration_data)
         
         
         assert response.status_code == 201
@@ -57,7 +57,7 @@ class TestUserRegistrationFlow:
         assert user.email == "newuser@example.com"
         assert user.is_active is True
     
-    def test_registration_duplicate_username(self, client: TestClient, test_user: User):
+    def test_registration_duplicate_username(self, integration_client: TestClient, test_user: User):
         """Test registration fails with duplicate username."""
         registration_data = {
             "username": test_user.username,  # Duplicate
@@ -65,7 +65,7 @@ class TestUserRegistrationFlow:
             "password": "V@lidP@ss9!"
         }
         
-        response = client.post("/api/v1/auth/register", json=registration_data)
+        response = integration_client.post("/api/v1/auth/register", json=registration_data)
         
         assert response.status_code == 409  # Conflict for duplicate username
         detail = response.json()["detail"]
@@ -75,7 +75,7 @@ class TestUserRegistrationFlow:
         else:
             assert "already" in str(detail).lower()
     
-    def test_registration_duplicate_email(self, client: TestClient, test_user: User):
+    def test_registration_duplicate_email(self, integration_client: TestClient, test_user: User):
         """Test registration fails with duplicate email."""
         registration_data = {
             "username": "differentuser",
@@ -83,7 +83,7 @@ class TestUserRegistrationFlow:
             "password": "V@lidP@ss9!"
         }
         
-        response = client.post("/api/v1/auth/register", json=registration_data)
+        response = integration_client.post("/api/v1/auth/register", json=registration_data)
         
         assert response.status_code == 409  # Conflict for duplicate email
         detail = response.json()["detail"]
@@ -93,7 +93,7 @@ class TestUserRegistrationFlow:
         else:
             assert "already" in str(detail).lower()
     
-    def test_registration_weak_password(self, client: TestClient):
+    def test_registration_weak_password(self, integration_client: TestClient):
         """Test registration fails with weak password."""
         registration_data = {
             "username": "weakpassuser",
@@ -101,7 +101,7 @@ class TestUserRegistrationFlow:
             "password": "weak"  # Too weak
         }
         
-        response = client.post("/api/v1/auth/register", json=registration_data)
+        response = integration_client.post("/api/v1/auth/register", json=registration_data)
         
         assert response.status_code == 422  # FastAPI returns 422 for validation errors
         # For validation errors, detail is usually a list or string
@@ -109,7 +109,7 @@ class TestUserRegistrationFlow:
         detail_str = str(detail).lower()
         assert "password" in detail_str
     
-    def test_registration_invalid_email(self, client: TestClient):
+    def test_registration_invalid_email(self, integration_client: TestClient):
         """Test registration fails with invalid email format."""
         registration_data = {
             "username": "invalidemailuser",
@@ -117,7 +117,7 @@ class TestUserRegistrationFlow:
             "password": "V@lidP@ss9!"
         }
         
-        response = client.post("/api/v1/auth/register", json=registration_data)
+        response = integration_client.post("/api/v1/auth/register", json=registration_data)
         
         assert response.status_code == 422  # Validation error
 
@@ -128,14 +128,14 @@ class TestUserRegistrationFlow:
 class TestLoginFlow:
     """Test complete login flow."""
     
-    def test_successful_login(self, client: TestClient, test_user: User, test_password: str):
+    def test_successful_login(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test successful login with valid credentials."""
         login_data = {
             "username": test_user.username,
             "password": test_password
         }
         
-        response = client.post("/api/v1/auth/token", data=login_data)
+        response = integration_client.post("/api/v1/auth/token", data=login_data)
         
         assert response.status_code == 200
         data = response.json()
@@ -145,14 +145,14 @@ class TestLoginFlow:
         assert data["user_id"] == test_user.id
         assert data["username"] == test_user.username
     
-    def test_login_wrong_password(self, client: TestClient, test_user: User):
+    def test_login_wrong_password(self, integration_client: TestClient, test_user: User):
         """Test login fails with wrong password."""
         login_data = {
             "username": test_user.username,
             "password": "Wr0ngP@ssw0rd!"
         }
         
-        response = client.post("/api/v1/auth/token", data=login_data)
+        response = integration_client.post("/api/v1/auth/token", data=login_data)
         
         assert response.status_code == 401
         detail = response.json()["detail"]
@@ -162,18 +162,18 @@ class TestLoginFlow:
         else:
             assert "invalid" in str(detail).lower() or "credentials" in str(detail).lower()
     
-    def test_login_nonexistent_user(self, client: TestClient):
+    def test_login_nonexistent_user(self, integration_client: TestClient):
         """Test login fails with nonexistent user."""
         login_data = {
             "username": "nonexistent",
             "password": "Str0ngP@ssw0rd!"
         }
         
-        response = client.post("/api/v1/auth/token", data=login_data)
+        response = integration_client.post("/api/v1/auth/token", data=login_data)
         
         assert response.status_code == 401
     
-    def test_login_inactive_user(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_login_inactive_user(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test login fails for inactive user."""
         # Deactivate user
         test_user.is_active = False
@@ -184,7 +184,7 @@ class TestLoginFlow:
             "password": test_password
         }
         
-        response = client.post("/api/v1/auth/token", data=login_data)
+        response = integration_client.post("/api/v1/auth/token", data=login_data)
         
         assert response.status_code == 403  # Inactive users get 403 Forbidden
         detail = response.json()["detail"]
@@ -205,7 +205,7 @@ class TestLoginFlow:
 class TestMFALoginFlow:
     """Test login flow with MFA enabled."""
     
-    def test_login_with_mfa_requires_session_token(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_login_with_mfa_requires_session_token(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test that login with MFA enabled returns session token for MFA completion."""
         # Enable MFA for user
         mfa_secret = MFASecret.create_for_user(
@@ -224,7 +224,7 @@ class TestMFALoginFlow:
             "password": test_password
         }
 
-        response = client.post("/api/v1/auth/token", data=login_data)
+        response = integration_client.post("/api/v1/auth/token", data=login_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -244,7 +244,7 @@ class TestMFALoginFlow:
         db_session.delete(mfa_secret)
         db_session.commit()
     
-    def test_complete_mfa_with_valid_code(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_complete_mfa_with_valid_code(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test successful MFA completion with valid code using session token."""
         # Enable MFA for user
         mfa_secret = MFASecret.create_for_user(
@@ -262,7 +262,7 @@ class TestMFALoginFlow:
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
 
         login_data = login_response.json()
@@ -279,7 +279,7 @@ class TestMFALoginFlow:
             "mfa_token": valid_code
         }
 
-        mfa_response = client.post("/api/v1/auth/token/mfa", json=mfa_data)
+        mfa_response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data)
 
         assert mfa_response.status_code == 200
         data = mfa_response.json()
@@ -291,7 +291,7 @@ class TestMFALoginFlow:
 
         # Verify tokens are valid by making an authenticated request
         access_token = data["access_token"]
-        profile_response = client.get(
+        profile_response = integration_client.get(
             "/api/v1/users/me",
             headers={"Authorization": f"Bearer {access_token}"}
         )
@@ -301,7 +301,7 @@ class TestMFALoginFlow:
         db_session.delete(mfa_secret)
         db_session.commit()
     
-    def test_complete_mfa_with_invalid_code(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_complete_mfa_with_invalid_code(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test MFA completion fails with invalid code."""
         # Enable MFA for user
         mfa_secret = MFASecret.create_for_user(
@@ -319,7 +319,7 @@ class TestMFALoginFlow:
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
 
         session_token = login_response.json()["session_token"]
@@ -330,7 +330,7 @@ class TestMFALoginFlow:
             "mfa_token": "000000"  # Invalid
         }
 
-        mfa_response = client.post("/api/v1/auth/token/mfa", json=mfa_data)
+        mfa_response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data)
 
         assert mfa_response.status_code == 401
         detail = mfa_response.json()["detail"]
@@ -344,7 +344,7 @@ class TestMFALoginFlow:
         db_session.delete(mfa_secret)
         db_session.commit()
 
-    def test_complete_mfa_with_invalid_session_token(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_complete_mfa_with_invalid_session_token(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test MFA completion fails with invalid session token."""
         # Enable MFA for user
         mfa_secret = MFASecret.create_for_user(
@@ -363,7 +363,7 @@ class TestMFALoginFlow:
             "mfa_token": "123456"
         }
 
-        response = client.post("/api/v1/auth/token/mfa", json=mfa_data)
+        response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data)
 
         assert response.status_code == 401
         detail = response.json()["detail"]
@@ -377,7 +377,7 @@ class TestMFALoginFlow:
         db_session.delete(mfa_secret)
         db_session.commit()
 
-    def test_complete_mfa_with_backup_code(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_complete_mfa_with_backup_code(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test MFA completion with valid backup code."""
         # Enable MFA for user with backup codes
         mfa_secret = MFASecret.create_for_user(
@@ -400,7 +400,7 @@ class TestMFALoginFlow:
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
 
         session_token = login_response.json()["session_token"]
@@ -411,7 +411,7 @@ class TestMFALoginFlow:
             "mfa_token": test_backup_code
         }
 
-        mfa_response = client.post("/api/v1/auth/token/mfa", json=mfa_data)
+        mfa_response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data)
 
         assert mfa_response.status_code == 200
         data = mfa_response.json()
@@ -427,7 +427,7 @@ class TestMFALoginFlow:
         db_session.delete(mfa_secret)
         db_session.commit()
 
-    def test_session_token_reuse_after_successful_mfa(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_session_token_reuse_after_successful_mfa(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test that session token cannot be reused after successful MFA completion."""
         # Enable MFA for user
         mfa_secret = MFASecret.create_for_user(
@@ -445,7 +445,7 @@ class TestMFALoginFlow:
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
 
         session_token = login_response.json()["session_token"]
@@ -460,7 +460,7 @@ class TestMFALoginFlow:
             "mfa_token": valid_code
         }
 
-        mfa_response = client.post("/api/v1/auth/token/mfa", json=mfa_data)
+        mfa_response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data)
         assert mfa_response.status_code == 200
 
         # Step 3: Try to reuse the same session token (should fail)
@@ -469,7 +469,7 @@ class TestMFALoginFlow:
             "mfa_token": totp.now()  # Generate new code just in case
         }
 
-        reuse_response = client.post("/api/v1/auth/token/mfa", json=mfa_data_reuse)
+        reuse_response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data_reuse)
 
         assert reuse_response.status_code == 401
         detail = reuse_response.json()["detail"]
@@ -483,7 +483,7 @@ class TestMFALoginFlow:
         db_session.delete(mfa_secret)
         db_session.commit()
 
-    def test_mfa_session_expires(self, client: TestClient, test_user: User, test_password: str, db_session: Session):
+    def test_mfa_session_expires(self, integration_client: TestClient, test_user: User, test_password: str, db_session: Session):
         """Test that MFA session tokens expire after the configured time."""
         # Enable MFA for user
         mfa_secret = MFASecret.create_for_user(
@@ -501,7 +501,7 @@ class TestMFALoginFlow:
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
 
         session_token = login_response.json()["session_token"]
@@ -530,7 +530,7 @@ class TestMFALoginFlow:
             "mfa_token": valid_code
         }
 
-        mfa_response = client.post("/api/v1/auth/token/mfa", json=mfa_data)
+        mfa_response = integration_client.post("/api/v1/auth/token/mfa", json=mfa_data)
 
         assert mfa_response.status_code == 401
         detail = mfa_response.json()["detail"]
@@ -551,20 +551,20 @@ class TestMFALoginFlow:
 class TestTokenRefreshFlow:
     """Test token refresh flow."""
     
-    def test_successful_token_refresh(self, client: TestClient, test_user: User, test_password: str):
+    def test_successful_token_refresh(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test successful token refresh with valid refresh token."""
         # First, login to get tokens
         login_data = {
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
         
         refresh_token = login_response.json()["refresh_token"]
         
         # Now refresh the token
-        refresh_response = client.post(
+        refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": refresh_token}
         )
@@ -579,28 +579,28 @@ class TestTokenRefreshFlow:
         assert data["access_token"] != login_response.json()["access_token"]
         assert data["refresh_token"] != refresh_token
     
-    def test_refresh_with_invalid_token(self, client: TestClient):
+    def test_refresh_with_invalid_token(self, integration_client: TestClient):
         """Test token refresh fails with invalid refresh token."""
-        refresh_response = client.post(
+        refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": "invalid.token.here"}
         )
         
         assert refresh_response.status_code == 401
     
-    def test_refresh_with_access_token(self, client: TestClient, test_user: User, test_password: str):
+    def test_refresh_with_access_token(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test that refresh endpoint rejects access tokens."""
         # Login to get tokens
         login_data = {
             "username": test_user.username,
             "password": test_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         
         access_token = login_response.json()["access_token"]
         
         # Try to refresh with access token (should fail)
-        refresh_response = client.post(
+        refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": access_token}
         )
@@ -614,16 +614,16 @@ class TestTokenRefreshFlow:
 class TestLogoutFlow:
     """Test logout flow."""
     
-    def test_successful_logout(self, authenticated_client: TestClient):
+    def test_successful_logout(self, integration_authenticated_client: TestClient):
         """Test successful logout."""
-        response = authenticated_client.post("/api/v1/auth/logout")
+        response = integration_authenticated_client.post("/api/v1/auth/logout")
         
         assert response.status_code == 200
         assert "logged out" in response.json()["message"].lower()
     
-    def test_logout_without_authentication(self, client: TestClient):
+    def test_logout_without_authentication(self, integration_client: TestClient):
         """Test logout without authentication fails."""
-        response = client.post("/api/v1/auth/logout")
+        response = integration_client.post("/api/v1/auth/logout")
         
         assert response.status_code == 401
 
@@ -634,13 +634,13 @@ class TestLogoutFlow:
 class TestPasswordResetFlow:
     """Test complete password reset flow."""
     
-    def test_request_password_reset(self, client: TestClient, test_user: User, db_session: Session):
+    def test_request_password_reset(self, integration_client: TestClient, test_user: User, db_session: Session):
         """Test requesting password reset sends email and creates token."""
         reset_data = {
             "email": test_user.email
         }
         
-        response = client.post("/api/v1/auth/password-reset/request", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/request", json=reset_data)
         
         assert response.status_code == 200
         assert "reset link" in response.json()["message"].lower()
@@ -657,18 +657,18 @@ class TestPasswordResetFlow:
         db_session.delete(reset_token)
         db_session.commit()
     
-    def test_request_password_reset_nonexistent_email(self, client: TestClient):
+    def test_request_password_reset_nonexistent_email(self, integration_client: TestClient):
         """Test requesting password reset for nonexistent email still returns 200."""
         reset_data = {
             "email": "nonexistent@example.com"
         }
         
-        response = client.post("/api/v1/auth/password-reset/request", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/request", json=reset_data)
         
         # Should return 200 to prevent email enumeration
         assert response.status_code == 200
     
-    def test_complete_password_reset(self, client: TestClient, test_user: User, db_session: Session):
+    def test_complete_password_reset(self, integration_client: TestClient, test_user: User, db_session: Session):
         """Test completing password reset with valid token."""
         # First, request password reset
         from app.models.password_reset import PasswordResetToken
@@ -693,7 +693,7 @@ class TestPasswordResetFlow:
             "new_password": new_password
         }
         
-        response = client.post("/api/v1/auth/password-reset/complete", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/complete", json=reset_data)
         
         assert response.status_code == 200
         assert "password has been reset" in response.json()["message"].lower()
@@ -703,7 +703,7 @@ class TestPasswordResetFlow:
             "username": test_user.username,
             "password": new_password
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
         
         # Verify token is marked as used
@@ -714,19 +714,19 @@ class TestPasswordResetFlow:
         test_user.password_hash = PasswordHasher.hash_password("Str0ngP@ssw0rd!", test_user.username)
         db_session.commit()
     
-    def test_complete_password_reset_invalid_token(self, client: TestClient):
+    def test_complete_password_reset_invalid_token(self, integration_client: TestClient):
         """Test password reset fails with invalid token."""
         reset_data = {
             "token": "invalid_token_12345",
             "new_password": "N3wP@ssw0rd!"
         }
         
-        response = client.post("/api/v1/auth/password-reset/complete", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/complete", json=reset_data)
         
         assert response.status_code == 400
         assert "invalid" in response.json()["detail"].lower()
     
-    def test_complete_password_reset_expired_token(self, client: TestClient, test_user: User, db_session: Session):
+    def test_complete_password_reset_expired_token(self, integration_client: TestClient, test_user: User, db_session: Session):
         """Test password reset fails with expired token."""
         from app.models.password_reset import PasswordResetToken
         from app.core.security import TokenGenerator
@@ -750,7 +750,7 @@ class TestPasswordResetFlow:
             "new_password": "N3wP@ssw0rd!"
         }
         
-        response = client.post("/api/v1/auth/password-reset/complete", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/complete", json=reset_data)
         
         assert response.status_code == 400
         assert "expired" in response.json()["detail"].lower()
@@ -766,50 +766,50 @@ class TestPasswordResetFlow:
 class TestProtectedEndpoints:
     """Test accessing protected endpoints."""
     
-    def test_access_protected_endpoint_with_valid_token(self, authenticated_client: TestClient):
+    def test_access_protected_endpoint_with_valid_token(self, integration_authenticated_client: TestClient):
         """Test accessing protected endpoint with valid token."""
-        response = authenticated_client.get("/api/v1/users/me")
+        response = integration_authenticated_client.get("/api/v1/users/me")
         
         assert response.status_code == 200
         data = response.json()
         assert "username" in data
         assert "email" in data
     
-    def test_access_protected_endpoint_without_token(self, client: TestClient):
+    def test_access_protected_endpoint_without_token(self, integration_client: TestClient):
         """Test accessing protected endpoint without token fails."""
-        response = client.get("/api/v1/users/me")
+        response = integration_client.get("/api/v1/users/me")
         
         assert response.status_code == 401
     
-    def test_access_protected_endpoint_with_invalid_token(self, client: TestClient):
+    def test_access_protected_endpoint_with_invalid_token(self, integration_client: TestClient):
         """Test accessing protected endpoint with invalid token fails."""
-        response = client.get(
+        response = integration_client.get(
             "/api/v1/users/me",
             headers={"Authorization": "Bearer invalid.token.here"}
         )
         
         assert response.status_code == 401
     
-    def test_update_user_profile(self, authenticated_client: TestClient):
+    def test_update_user_profile(self, integration_authenticated_client: TestClient):
         """Test updating user profile."""
         update_data = {
             "email": "newemail@example.com"
         }
         
-        response = authenticated_client.put("/api/v1/users/me", json=update_data)
+        response = integration_authenticated_client.put("/api/v1/users/me", json=update_data)
         
         assert response.status_code == 200
         data = response.json()
         assert data["email"] == "newemail@example.com"
     
-    def test_change_password(self, authenticated_client: TestClient, test_password: str):
+    def test_change_password(self, integration_authenticated_client: TestClient, test_password: str):
         """Test changing user password."""
         password_data = {
             "current_password": test_password,
             "new_password": "N3wT3stP@ss!"
         }
         
-        response = authenticated_client.put("/api/v1/users/me/password", json=password_data)
+        response = integration_authenticated_client.put("/api/v1/users/me/password", json=password_data)
         
         assert response.status_code == 200
         assert "password updated" in response.json()["message"].lower()
@@ -821,51 +821,51 @@ class TestProtectedEndpoints:
 class TestRoleBasedAccessControl:
     """Test role-based access control in practice."""
     
-    def test_admin_access_with_admin_role(self, client: TestClient, admin_user: User, db_session: Session):
+    def test_admin_access_with_admin_role(self, integration_client: TestClient, admin_user: User, db_session: Session):
         """Test admin endpoints accessible with admin role."""
         # Login as admin
         login_data = {
             "username": admin_user.username,
             "password": "Str0ngP@ssw0rd!"
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
         
         access_token = login_response.json()["access_token"]
         
         # Try to access admin endpoint
-        response = client.get(
+        response = integration_client.get(
             "/api/v1/admin/users",
             headers={"Authorization": f"Bearer {access_token}"}
         )
         
         assert response.status_code == 200
     
-    def test_admin_access_without_admin_role(self, authenticated_client: TestClient):
+    def test_admin_access_without_admin_role(self, integration_authenticated_client: TestClient):
         """Test admin endpoints forbidden without admin role."""
-        response = authenticated_client.get("/api/v1/admin/users")
+        response = integration_authenticated_client.get("/api/v1/admin/users")
         
         # Should be 403 since user is authenticated but lacks admin role
         assert response.status_code == 403
         assert "permission" in response.json()["detail"].lower()
     
-    def test_admin_access_with_admin_role(self, admin_authenticated_client: TestClient):
+    def test_admin_access_with_admin_role(self, integration_admin_authenticated_client: TestClient):
         """Test admin endpoints accessible with admin role."""
-        response = admin_authenticated_client.get("/api/v1/admin/users")
+        response = integration_admin_authenticated_client.get("/api/v1/admin/users")
         
         # Should be 200 since user has admin role
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)  # Should return list of users
     
-    def test_assign_role_to_user(self, client: TestClient, admin_user: User, test_user: User, db_session: Session):
+    def test_assign_role_to_user(self, integration_client: TestClient, admin_user: User, test_user: User, db_session: Session):
         """Test assigning role to user (admin only)."""
         # Login as admin
         login_data = {
             "username": admin_user.username,
             "password": "Str0ngP@ssw0rd!"
         }
-        login_response = client.post("/api/v1/auth/token", data=login_data)
+        login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         access_token = login_response.json()["access_token"]
         
         # Create a test role
@@ -882,7 +882,7 @@ class TestRoleBasedAccessControl:
             "role_id": test_role.id
         }
         
-        response = client.post(
+        response = integration_client.post(
             "/api/v1/admin/user-roles/assign",
             json=assignment_data,
             headers={"Authorization": f"Bearer {access_token}"}
@@ -908,10 +908,10 @@ class TestRoleBasedAccessControl:
 class TestSessionManagement:
     """Test session management functionality."""
     
-    def test_multiple_active_sessions(self, client: TestClient, test_user: User, test_password: str):
+    def test_multiple_active_sessions(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test user can have multiple active sessions."""
         # Login from "device 1"
-        login1 = client.post(
+        login1 = integration_client.post(
             "/api/v1/auth/token",
             data={"username": test_user.username, "password": test_password}
         )
@@ -924,7 +924,7 @@ class TestSessionManagement:
         token1 = login1_data["access_token"]
 
         # Login from "device 2"
-        login2 = client.post(
+        login2 = integration_client.post(
             "/api/v1/auth/token",
             data={"username": test_user.username, "password": test_password}
         )
@@ -940,11 +940,11 @@ class TestSessionManagement:
         assert token1 != token2
 
         # Both should be able to access protected resources
-        response1 = client.get(
+        response1 = integration_client.get(
             "/api/v1/users/me",
             headers={"Authorization": f"Bearer {token1}"}
         )
-        response2 = client.get(
+        response2 = integration_client.get(
             "/api/v1/users/me",
             headers={"Authorization": f"Bearer {token2}"}
         )
@@ -952,10 +952,10 @@ class TestSessionManagement:
         assert response1.status_code == 200
         assert response2.status_code == 200
     
-    def test_logout_single_session(self, client: TestClient, test_user: User, test_password: str):
+    def test_logout_single_session(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test logout only invalidates current session."""
         # Create two sessions
-        login1 = client.post(
+        login1 = integration_client.post(
             "/api/v1/auth/token",
             data={"username": test_user.username, "password": test_password}
         )
@@ -965,7 +965,7 @@ class TestSessionManagement:
             pytest.skip("MFA is enabled for test user, skipping logout test")
         token1 = login1_data["access_token"]
 
-        login2 = client.post(
+        login2 = integration_client.post(
             "/api/v1/auth/token",
             data={"username": test_user.username, "password": test_password}
         )
@@ -976,21 +976,21 @@ class TestSessionManagement:
         token2 = login2_data["access_token"]
 
         # Logout from session 1
-        logout_response = client.post(
+        logout_response = integration_client.post(
             "/api/v1/auth/logout",
             headers={"Authorization": f"Bearer {token1}"}
         )
         assert logout_response.status_code == 200
 
         # Token 1 should be invalid
-        response1 = client.get(
+        response1 = integration_client.get(
             "/api/v1/users/me",
             headers={"Authorization": f"Bearer {token1}"}
         )
         assert response1.status_code == 401
 
         # Token 2 should still be valid
-        response2 = client.get(
+        response2 = integration_client.get(
             "/api/v1/users/me",
             headers={"Authorization": f"Bearer {token2}"}
         )
@@ -1003,12 +1003,12 @@ class TestSessionManagement:
 class TestEdgeCasesAndErrorHandling:
     """Test edge cases and error handling."""
     
-    def test_concurrent_login_attempts(self, client: TestClient, test_user: User, test_password: str):
+    def test_concurrent_login_attempts(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test handling concurrent login attempts."""
         # Simulate concurrent logins
         responses = []
         for _ in range(5):
-            response = client.post(
+            response = integration_client.post(
                 "/api/v1/auth/token",
                 data={"username": test_user.username, "password": test_password}
             )
@@ -1022,10 +1022,10 @@ class TestEdgeCasesAndErrorHandling:
             if "mfa_required" not in response_data:
                 assert "access_token" in response_data
     
-    def test_token_reuse_after_refresh(self, client: TestClient, test_user: User, test_password: str):
+    def test_token_reuse_after_refresh(self, integration_client: TestClient, test_user: User, test_password: str):
         """Test that old refresh token cannot be reused after refresh."""
         # Login
-        login_response = client.post(
+        login_response = integration_client.post(
             "/api/v1/auth/token",
             data={"username": test_user.username, "password": test_password}
         )
@@ -1036,14 +1036,14 @@ class TestEdgeCasesAndErrorHandling:
         old_refresh_token = login_data["refresh_token"]
 
         # Refresh token
-        refresh_response = client.post(
+        refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": old_refresh_token}
         )
         assert refresh_response.status_code == 200
 
         # Try to reuse old refresh token (should fail or return new tokens)
-        reuse_response = client.post(
+        reuse_response = integration_client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": old_refresh_token}
         )
@@ -1051,7 +1051,7 @@ class TestEdgeCasesAndErrorHandling:
         # Depending on implementation, this might fail (401) or succeed with rotation
         assert reuse_response.status_code in [200, 401]
     
-    def test_sql_injection_prevention(self, client: TestClient):
+    def test_sql_injection_prevention(self, integration_client: TestClient):
         """Test that SQL injection attempts are prevented."""
         malicious_input = "admin' OR '1'='1"
         
@@ -1060,12 +1060,12 @@ class TestEdgeCasesAndErrorHandling:
             "password": "anything"
         }
         
-        response = client.post("/api/v1/auth/token", data=login_data)
+        response = integration_client.post("/api/v1/auth/token", data=login_data)
         
         # Should fail safely, not cause an error
         assert response.status_code == 401
     
-    def test_xss_prevention_in_registration(self, client: TestClient):
+    def test_xss_prevention_in_registration(self, integration_client: TestClient):
         """Test that XSS attempts are sanitized."""
         xss_script = "<script>alert('xss')</script>"
         
@@ -1075,7 +1075,7 @@ class TestEdgeCasesAndErrorHandling:
             "password": "V@lidP@ss9!"
         }
         
-        response = client.post("/api/v1/auth/register", json=registration_data)
+        response = integration_client.post("/api/v1/auth/register", json=registration_data)
         
         # Should either reject or sanitize
         # Validation might reject special characters in username

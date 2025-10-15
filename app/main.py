@@ -21,16 +21,18 @@ from app.middleware import (
     OptionalAuthMiddleware,
     SecurityHeadersMiddleware,
     RequestResponseLoggingMiddleware,
-    RequestValidationMiddleware
+    RequestValidationMiddleware,
 )
 
-from app.core.config import settings, get_cors_origins, get_cors_methods, get_cors_headers
+# Import dependencies for injection
 from app.core.redis import get_redis
+from app.core.database import get_db
+from app.core.config import settings, get_cors_origins, get_cors_methods, get_cors_headers
 
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown (cleanup if needed)
+    # Shutdown
     cleanup_task.cancel()
     try:
         await cleanup_task
@@ -65,7 +67,6 @@ async def schedule_token_cleanup():
 
     Runs every 24 hours.
     """
-    from app.core.database import get_db
     from app.core.security import TokenRotation
 
     while True:
@@ -80,13 +81,11 @@ async def schedule_token_cleanup():
             try:
                 # Enhanced token cleanup
                 cleanup_stats = await TokenRotation.cleanup_expired_tokens(db, days_old=30)
-                
                 total_cleaned = sum(cleanup_stats.values())
                 if total_cleaned > 0:
                     logger.info(f"Scheduled cleanup completed: {cleanup_stats}")
                 else:
                     logger.debug("Scheduled cleanup: no expired tokens to remove")
-                    
             finally:
                 db.close()
 
@@ -113,34 +112,35 @@ if settings.cors_enabled:
         allow_credentials=settings.cors_credentials,
         allow_methods=get_cors_methods(),
         allow_headers=get_cors_headers(),
-    ) 
+    )
 
-# Add HTTPS redirect middleware for production (uses Starlette's built-in)
-if settings.app_env == 'production':
+# Add HTTPS redirect middleware for production
+if settings.app_env == "production":
     app.add_middleware(HTTPSRedirectMiddleware)
     logger.info("HTTPS redirect middleware enabled (production mode - all HTTP redirected to HTTPS)")
 
-# Add TrustedHost middleware for production (prevents host header attacks)
-if settings.app_env == 'production':
-    trusted_hosts = settings.trusted_hosts.split(',') if hasattr(settings, 'trusted_hosts') and settings.trusted_hosts else ['*']
+# Add TrustedHost middleware for production
+if settings.app_env == "production":
+    trusted_hosts = (
+        settings.trusted_hosts.split(",") if hasattr(settings, "trusted_hosts") and settings.trusted_hosts else ["*"]
+    )
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
     logger.info(f"Trusted host middleware enabled with hosts: {trusted_hosts}")
 
-# Add request validation middleware (first line of defense)
+# Add request validation middleware
 app.add_middleware(RequestValidationMiddleware)
 logger.info("Request validation middleware enabled")
 
-# Add security headers middleware (ensures all responses have security headers)
+# Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 logger.info("Security headers middleware enabled")
 
 # Add request/response logging middleware
-# Note: Always enabled to add timing headers, but logging is conditional
 app.add_middleware(
     RequestResponseLoggingMiddleware,
     log_request_body=settings.debug,
     log_response_body=False,
-    enable_logging=settings.debug or settings.app_env in ["development", "staging"]
+    enable_logging=settings.debug or settings.app_env in ["development", "staging"],
 )
 if settings.debug or settings.app_env in ["development", "staging"]:
     logger.info("Request/response logging middleware enabled (with logging)")
@@ -150,16 +150,17 @@ else:
 # Add trusted host middleware for security
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"] if settings.debug else ["localhost", "127.0.0.1"]
+    allowed_hosts=["*"] if settings.debug else ["localhost", "127.0.0.1"],
 )
 
-# Add authentication middleware (must come before other middleware that might need auth)
+# Add authentication middleware with injected dependencies
 if settings.auth_middleware_enabled:
-    app.add_middleware(AuthMiddleware)
-    logger.info("Authentication middleware enabled")
-
-# Note: Request timing is handled by RequestResponseLoggingMiddleware
-# No need for separate timing middleware
+    app.add_middleware(
+        AuthMiddleware,
+        redis_getter=get_redis,
+        db_getter=get_db,
+    )
+    logger.info("Authentication middleware enabled with injected dependencies")
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -167,10 +168,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={
-            "detail": "Internal server error" if not settings.debug else str(exc),
-            "type": "internal_error"
-        }
+        content={"detail": "Internal server error" if not settings.debug else str(exc), "type": "internal_error"},
     )
 
 # Health check endpoint
@@ -181,7 +179,7 @@ async def health_check():
         "status": "healthy",
         "service": settings.app_name,
         "version": settings.app_version,
-        "environment": settings.app_env
+        "environment": settings.app_env,
     }
 
 # Root endpoint
@@ -193,7 +191,7 @@ async def root():
         "version": settings.app_version,
         "description": "Python Authentication & Authorization Server",
         "docs": "/docs" if settings.debug else None,
-        "health": "/health"
+        "health": "/health",
     }
 
 # Include API routers
@@ -215,10 +213,11 @@ app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "app.main:app",
         host=settings.host,
         port=settings.port,
         reload=settings.reload,
-        log_level=settings.log_level.lower()
+        log_level=settings.log_level.lower(),
     )

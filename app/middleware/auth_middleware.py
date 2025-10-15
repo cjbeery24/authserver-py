@@ -32,77 +32,71 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(
-        self, 
-        app, 
+        self,
+        app,
         exclude_paths: Optional[list] = None,
-        redis_getter: Optional[Callable] = None,
-        db_getter: Optional[Callable] = None
+        redis_getter: Callable = None,
+        db_getter: Callable = None,
     ):
         """
         Initialize AuthMiddleware with dependency injection.
-        
+
         Args:
             app: FastAPI application
             exclude_paths: Paths to skip authentication
-            redis_getter: Callable that returns Redis client (for testing)
-            db_getter: Callable that returns database session (for testing)
+            redis_getter: Callable that returns Redis client
+            db_getter: Callable that returns database session
         """
         super().__init__(app)
         self.exclude_paths = exclude_paths or [
-            "/", "/health", "/docs", "/redoc", "/openapi.json",
+            "/health",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
             "/api/v1/auth/register",
             "/api/v1/auth/token",
             "/api/v1/auth/token/mfa",
             "/api/v1/auth/password-reset/request",
             "/api/v1/auth/password-reset/confirm",
             "/oauth/token",
-            "/.well-known/openid-configuration"
+            "/.well-known/openid-configuration",
         ]
-        
-        # Dependency injection for testability
-        # Default to actual implementations, but can be mocked for testing
-        if redis_getter is None:
-            from app.core.redis import get_redis
-            self.redis_getter = get_redis
-        else:
-            self.redis_getter = redis_getter
-        
-        if db_getter is None:
-            from app.core.database import get_db
-            self.db_getter = db_getter
-        else:
-            self.db_getter = db_getter
+        if redis_getter is None or db_getter is None:
+            raise ValueError("redis_getter and db_getter must be provided")
+        self.redis_getter = redis_getter
+        self.db_getter = db_getter
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """
         Process each request through authentication middleware.
-        
+
         Uses dependency injection for Redis and database connections.
         """
+        logger.debug(f"AuthMiddleware processing: {request.url.path}")
+
         # Skip authentication for excluded paths
         if self._should_skip_auth(request.url.path):
+            logger.debug(f"Skipping auth for excluded path: {request.url.path}")
             return await call_next(request)
 
-        # Get dependencies (allows for mocking in tests)
+        # Get dependencies
         redis_client = await self.redis_getter()
         db_session = next(self.db_getter())
-        
+
         try:
             # Extract and validate token using shared utility with injected deps
             user_context = await TokenUtils.extract_and_validate(
-                request, 
-                redis_client,
-                db_session,
-                required=True
+                request, redis_client, db_session, required=True
             )
-            
+            logger.debug(f"User context: {user_context}")
+
             if not user_context:
                 return await self._unauthorized_response("Missing or invalid authentication token")
 
             # Add user context to request state
             request.state.user = user_context["user"]
             request.state.token_data = user_context["token_data"]
-            
+
             # Store raw token for blacklisting
             raw_token = await TokenUtils.extract_token(request)
             request.state.raw_token = raw_token
@@ -111,33 +105,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
 
             return response
-            
+
         finally:
             # Ensure database session is closed
             db_session.close()
 
     def _should_skip_auth(self, path: str) -> bool:
         """Check if the path should skip authentication."""
-        # Exact match
-        if path in self.exclude_paths:
+        if path in self.exclude_paths or path == "/":
             return True
-
-        # Prefix match (for API versioning)
-        for excluded_path in self.exclude_paths:
-            if path.startswith(excluded_path):
-                return True
-
         return False
 
     async def _unauthorized_response(self, message: str = "Authentication required") -> JSONResponse:
         """Return standardized unauthorized response."""
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "detail": message,
-                "type": "authentication_error"
-            },
-            headers={"WWW-Authenticate": "Bearer"}
+            content={"detail": message, "type": "authentication_error"},
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 
@@ -176,7 +160,7 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
         
         if db_getter is None:
             from app.core.database import get_db
-            self.db_getter = db_getter
+            self.db_getter = get_db
         else:
             self.db_getter = db_getter
 

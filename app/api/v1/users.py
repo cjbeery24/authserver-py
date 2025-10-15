@@ -11,7 +11,7 @@ import json
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import PasswordHasher, AuthenticationManager
+from app.core.security import PasswordHasher, AuthenticationManager, TokenManager
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.models.audit_log import AuditLog
@@ -259,6 +259,22 @@ class DeleteAccountRequest(BaseModel):
     """Request model for account deletion."""
     password: str = Field(..., description="Password for verification")
 
+
+class ValidateTokenRequest(BaseModel):
+    """Request model for token validation testing."""
+    token: str = Field(..., description="JWT token to validate")
+
+
+class ValidateTokenResponse(BaseModel):
+    """Response model for token validation result."""
+    valid: bool
+    decoded_payload: Optional[dict] = None
+    error: Optional[str] = None
+    token_type: Optional[str] = None
+    expires_at: Optional[int] = None
+    issued_at: Optional[int] = None
+    user_id: Optional[int] = None
+
 @router.delete("/me",
               dependencies=[Depends(RateLimiter(times=3, hours=1))])
 async def delete_account(
@@ -304,4 +320,46 @@ async def delete_account(
         "message": "Account has been deactivated successfully",
         "user_id": current_user.id
     }
+
+
+@router.post("/test-token", response_model=ValidateTokenResponse)
+async def test_token_validation(
+    token_request: ValidateTokenRequest,
+    current_user: User = Depends(get_current_user_or_401),
+    db: Session = Depends(get_db)
+):
+    """
+    Test JWT token validation and decoding.
+
+    This endpoint allows authenticated users to test token validation
+    using the same logic as the authentication middleware.
+    Useful for debugging JWT token issues.
+    """
+    try:
+        # Use the same token verification logic as middleware
+        payload = await TokenManager.verify_token(token_request.token, token_type="access")
+
+        if payload:
+            # Token is valid
+            return ValidateTokenResponse(
+                valid=True,
+                decoded_payload=payload,
+                token_type=payload.get("type"),
+                expires_at=payload.get("exp"),
+                issued_at=payload.get("iat"),
+                user_id=payload.get("sub")
+            )
+        else:
+            # Token is invalid
+            return ValidateTokenResponse(
+                valid=False,
+                error="Token validation failed - invalid signature, expired, or malformed"
+            )
+
+    except Exception as e:
+        logger.error(f"Token validation error: {str(e)}")
+        return ValidateTokenResponse(
+            valid=False,
+            error=f"Token validation error: {str(e)}"
+        )
 
