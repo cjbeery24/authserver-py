@@ -560,21 +560,21 @@ class TestTokenRefreshFlow:
         }
         login_response = integration_client.post("/api/v1/auth/token", data=login_data)
         assert login_response.status_code == 200
-        
+
         refresh_token = login_response.json()["refresh_token"]
-        
-        # Now refresh the token
+
+        # Now refresh the token using Bearer token in header
         refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
-            json={"refresh_token": refresh_token}
+            headers={"Authorization": f"Bearer {refresh_token}"}
         )
-        
+
         assert refresh_response.status_code == 200
         data = refresh_response.json()
         assert "access_token" in data
         assert "refresh_token" in data
         assert data["token_type"] == "bearer"
-        
+
         # New tokens should be different from old ones
         assert data["access_token"] != login_response.json()["access_token"]
         assert data["refresh_token"] != refresh_token
@@ -583,9 +583,9 @@ class TestTokenRefreshFlow:
         """Test token refresh fails with invalid refresh token."""
         refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
-            json={"refresh_token": "invalid.token.here"}
+            headers={"Authorization": "Bearer invalid.token.here"}
         )
-        
+
         assert refresh_response.status_code == 401
     
     def test_refresh_with_access_token(self, integration_client: TestClient, test_user: User, test_password: str):
@@ -596,15 +596,15 @@ class TestTokenRefreshFlow:
             "password": test_password
         }
         login_response = integration_client.post("/api/v1/auth/token", data=login_data)
-        
+
         access_token = login_response.json()["access_token"]
-        
+
         # Try to refresh with access token (should fail)
         refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
-            json={"refresh_token": access_token}
+            headers={"Authorization": f"Bearer {access_token}"}
         )
-        
+
         assert refresh_response.status_code == 401
 
 
@@ -1038,14 +1038,14 @@ class TestEdgeCasesAndErrorHandling:
         # Refresh token
         refresh_response = integration_client.post(
             "/api/v1/auth/refresh",
-            json={"refresh_token": old_refresh_token}
+            headers={"Authorization": f"Bearer {old_refresh_token}"}
         )
         assert refresh_response.status_code == 200
 
         # Try to reuse old refresh token (should fail or return new tokens)
         reuse_response = integration_client.post(
             "/api/v1/auth/refresh",
-            json={"refresh_token": old_refresh_token}
+            headers={"Authorization": f"Bearer {old_refresh_token}"}
         )
 
         # Depending on implementation, this might fail (401) or succeed with rotation

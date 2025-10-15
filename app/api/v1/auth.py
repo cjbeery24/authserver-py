@@ -504,7 +504,7 @@ async def refresh_access_token(
         raise AuthError.invalid_refresh_token()
 
     # Verify token is a refresh token
-    if token_data.get('type') != 'refresh':
+    if token_data.get('token_type') != 'refresh':
         # Record failed refresh attempt
         if settings.auth_rate_limit_enabled:
             await FailedRefreshTracker.record_failed_attempt(client_ip, redis_client)

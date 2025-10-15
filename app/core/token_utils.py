@@ -190,30 +190,30 @@ class TokenUtils:
         request: Request,
         redis_client,
         db_session: Session,
-        token_type: str = "access",
+        token_type: Optional[str] = None,
         required: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         Convenience method that combines token extraction and validation.
-        
+
         Uses dependency injection for Redis and database connections.
-        
+
         Args:
             request: FastAPI request object
             redis_client: Redis client instance (injected)
             db_session: SQLAlchemy database session (injected)
-            token_type: Token type ("access" or "refresh")
+            token_type: Token type ("access", "refresh", or None to auto-detect)
             required: If True, logs when token missing/invalid
                      If False, silently returns None
-            
+
         Returns:
             User context dict or None
-            
+
         Example:
             from app.core.redis import get_redis
             from app.core.database import get_db
-            
-            # For required authentication
+
+            # For required authentication (auto-detects token type)
             redis_client = await get_redis()
             db = next(get_db())
             user_context = await TokenUtils.extract_and_validate(
@@ -221,7 +221,7 @@ class TokenUtils:
             )
             if not user_context:
                 raise HTTPException(401, "Authentication required")
-            
+
             # For optional authentication
             user_context = await TokenUtils.extract_and_validate(
                 request, redis_client, db, required=False
@@ -230,22 +230,50 @@ class TokenUtils:
         """
         # Extract token
         token = await TokenUtils.extract_token(request)
-        
+
         if not token:
             if required:
                 logger.debug(f"No token found in request to {request.url.path}")
             return None
-        
+
+        # Auto-detect token type if not specified
+        if token_type is None:
+            token_type = TokenUtils._get_token_type(token)
+
         # Validate token and get user (with injected dependencies)
         user_context = await TokenUtils.validate_and_get_user(
             request, token, redis_client, db_session, token_type
         )
-        
+
         if not user_context and required:
             logger.debug(f"Token validation failed for {request.url.path}")
-        
+
         return user_context
-    
+
+    @staticmethod
+    def _get_token_type(token: str) -> str:
+        """
+        Extract token type from JWT payload without verification.
+
+        Args:
+            token: JWT token string
+
+        Returns:
+            Token type ("access" or "refresh"), defaults to "access" if unknown
+        """
+        try:
+            # Decode without verification to check the type field
+            payload = TokenManager.decode_token(token)
+            if payload and "type" in payload:
+                token_type = payload["type"]
+                if token_type in ["access", "refresh"]:
+                    return token_type
+        except Exception:
+            pass
+
+        # Default to access token if type cannot be determined
+        return "access"
+
     @staticmethod
     def get_token_from_header(authorization: str) -> Optional[str]:
         """
