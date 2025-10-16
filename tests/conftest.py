@@ -261,7 +261,7 @@ def integration_client(override_get_db, db_session, clear_redis_cache):
 @pytest.fixture(scope="function")
 def authenticated_client(client, test_user, db_session):
     """Create a test client with an authenticated regular user (for unit tests)."""
-    from app.core.security import TokenManager
+    from app.core.token import TokenManager
 
     # Create access token for test user
     token_data = {
@@ -284,7 +284,7 @@ def authenticated_client(client, test_user, db_session):
 @pytest.fixture(scope="function")
 def integration_authenticated_client(integration_client, test_user, db_session):
     """Create an integration test client with an authenticated regular user."""
-    from app.core.security import TokenManager
+    from app.core.token import TokenManager
 
     # Create access token for test user
     token_data = {
@@ -307,7 +307,7 @@ def integration_authenticated_client(integration_client, test_user, db_session):
 @pytest.fixture(scope="function")
 def admin_authenticated_client(client, admin_user, db_session):
     """Create a test client with an authenticated admin user."""
-    from app.core.security import TokenManager
+    from app.core.token import TokenManager
 
     # Create access token for admin user with admin role
     token_data = {
@@ -330,7 +330,7 @@ def admin_authenticated_client(client, admin_user, db_session):
 @pytest.fixture(scope="function")
 def integration_admin_authenticated_client(integration_client, admin_user, db_session):
     """Create an integration test client with an authenticated admin user."""
-    from app.core.security import TokenManager
+    from app.core.token import TokenManager
 
     # Create access token for admin user with admin role
     token_data = {
@@ -356,7 +356,7 @@ def superuser_authenticated_client(client, db_session):
     from app.models.user import User
     from app.models.role import Role
     from app.models.user_role import UserRole
-    from app.core.security import PasswordHasher, TokenManager
+    from app.core.crypto import PasswordHasher, TokenManager
 
     # Create superuser role if it doesn't exist
     superuser_role = db_session.query(Role).filter(Role.name == "superuser").first()
@@ -404,7 +404,7 @@ def superuser_authenticated_client(client, db_session):
 def create_authenticated_client():
     """Factory fixture to create authenticated clients with custom roles."""
     def _create_client(client, user, roles, db_session):
-        from app.core.security import TokenManager
+        from app.core.token import TokenManager
 
         # Create access token with specified roles
         token_data = {
@@ -429,7 +429,7 @@ def create_authenticated_client():
 def test_user(db_session):
     """Create a test user."""
     from app.models.user import User
-    from app.core.security import PasswordHasher
+    from app.core.crypto import PasswordHasher
 
     user = User(
         username="testuser",
@@ -450,7 +450,7 @@ def admin_user(db_session):
     from app.models.user import User
     from app.models.role import Role
     from app.models.user_role import UserRole
-    from app.core.security import PasswordHasher
+    from app.core.crypto import PasswordHasher
 
     # Create admin role if it doesn't exist
     admin_role = db_session.query(Role).filter(Role.name == "admin").first()

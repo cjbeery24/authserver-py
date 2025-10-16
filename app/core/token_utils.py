@@ -13,7 +13,7 @@ from fastapi import Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
-from app.core.security import TokenManager
+from app.core.token import TokenManager
 from app.models.user import User
 
 logger = logging.getLogger(__name__)

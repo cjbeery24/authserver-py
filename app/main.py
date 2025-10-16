@@ -67,7 +67,7 @@ async def schedule_token_cleanup():
 
     Runs every 24 hours.
     """
-    from app.core.security import TokenRotation
+    from app.core.token import TokenRotation
 
     while True:
         try:

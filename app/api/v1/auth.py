@@ -11,20 +11,10 @@ from sqlalchemy.orm import Session
 import logging
 
 from app.core.database import get_db
-from app.core.security import (
-    TokenManager,
-    PasswordHasher,
-    PasswordStrength,
-    MFAHandler,
-    SecurityAudit,
-    FailedLoginTracker,
-    FailedRefreshTracker,
-    TokenGenerator,
-    TokenBlacklist,
-    MFASessionManager,
-    SecureTokenHasher,
-    AuthenticationManager
-)
+from app.core.token import TokenManager, TokenBlacklist
+from app.core.crypto import PasswordHasher, SecureTokenHasher
+from app.core.auth import PasswordStrength, MFAHandler, TokenGenerator, MFASessionManager, AuthenticationManager
+from app.core.audit import SecurityAudit, FailedLoginTracker, FailedRefreshTracker
 from app.core.errors import AuthError
 from app.core.redis import get_redis_dependency
 from app.models.user import User

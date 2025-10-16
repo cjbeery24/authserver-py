@@ -11,7 +11,7 @@ import logging
 
 from app.core.database import get_db
 from app.core.redis import get_redis_dependency
-from app.core.security import TokenRotation, TokenBinding, TokenSecurityManager
+from app.core.token import TokenRotation, TokenBinding, TokenSecurityManager
 from app.middleware import get_current_user_or_401
 from app.models.user import User
 from app.schemas.base import BaseModel

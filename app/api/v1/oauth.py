@@ -28,7 +28,7 @@ from app.core.oauth import (
 )
 from app.core.redis import get_redis_dependency
 from app.core.config import settings
-from app.core.security import RSAKeyManager
+from app.core.crypto import RSAKeyManager
 from app.models.oauth2_client import OAuth2Client
 from app.models.oauth2_client_token import OAuth2ClientToken
 from app.models.user import User
@@ -829,7 +829,7 @@ async def userinfo(
     
     # Validate token (simplified - in production, use proper JWT validation)
     # For now, we'll use our existing token validation
-    from app.core.security import TokenManager
+    from app.core.token import TokenManager
     payload = TokenManager.verify_token(access_token, "access")
     
     if not payload:

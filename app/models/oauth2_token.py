@@ -56,7 +56,7 @@ class OAuth2Token(BaseModel):
     def set_access_token(self, token: str):
         """Set access token with optional encryption."""
         if settings.encrypt_tokens_in_db:
-            from app.core.security import TokenEncryption
+            from app.core.crypto import TokenEncryption
             self.access_token = TokenEncryption.encrypt_token(token)
         else:
             self.access_token = token
@@ -67,7 +67,7 @@ class OAuth2Token(BaseModel):
             return None
         
         if settings.encrypt_tokens_in_db:
-            from app.core.security import TokenEncryption
+            from app.core.crypto import TokenEncryption
             return TokenEncryption.decrypt_token(self.access_token)
         else:
             return self.access_token
@@ -75,7 +75,7 @@ class OAuth2Token(BaseModel):
     def set_refresh_token(self, token: str):
         """Set refresh token with optional encryption."""
         if settings.encrypt_tokens_in_db:
-            from app.core.security import TokenEncryption
+            from app.core.crypto import TokenEncryption
             self.refresh_token = TokenEncryption.encrypt_token(token)
         else:
             self.refresh_token = token
@@ -86,7 +86,7 @@ class OAuth2Token(BaseModel):
             return None
             
         if settings.encrypt_tokens_in_db:
-            from app.core.security import TokenEncryption
+            from app.core.crypto import TokenEncryption
             return TokenEncryption.decrypt_token(self.refresh_token)
         else:
             return self.refresh_token

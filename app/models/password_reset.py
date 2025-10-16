@@ -38,7 +38,14 @@ class PasswordResetToken(BaseModel):
     @property
     def is_expired(self) -> bool:
         """Check if the reset token has expired."""
-        return datetime.now(timezone.utc) > self.expires_at
+        now = datetime.now(timezone.utc)
+        # Ensure both datetimes are timezone-aware for comparison
+        if self.expires_at.tzinfo is None:
+            # If expires_at is naive, assume it's UTC
+            expires_at_utc = self.expires_at.replace(tzinfo=timezone.utc)
+        else:
+            expires_at_utc = self.expires_at
+        return now > expires_at_utc
 
     @property
     def is_valid(self) -> bool:
@@ -67,7 +74,7 @@ class PasswordResetToken(BaseModel):
         Returns:
             PasswordResetToken: New reset token instance
         """
-        from app.core.security import SecureTokenHasher
+        from app.core.crypto import SecureTokenHasher
         
         expires_at = datetime.now(timezone.utc) + timedelta(hours=expiry_hours)
         token_hash = SecureTokenHasher.hash_token(token)
@@ -91,7 +98,7 @@ class PasswordResetToken(BaseModel):
         Returns:
             PasswordResetToken: Token instance if found and valid, None otherwise
         """
-        from app.core.security import SecureTokenHasher
+        from app.core.crypto import SecureTokenHasher
         
         if not token:
             return None
@@ -113,7 +120,7 @@ class PasswordResetToken(BaseModel):
         Returns:
             bool: True if token matches and is valid
         """
-        from app.core.security import SecureTokenHasher
+        from app.core.crypto import SecureTokenHasher
         
         if not token or self.is_used or self.is_expired:
             return False

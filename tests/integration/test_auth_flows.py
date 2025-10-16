@@ -21,7 +21,7 @@ from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.models.role import Role
 from app.models.user_role import UserRole
-from app.core.security import PasswordHasher
+from app.core.crypto import PasswordHasher
 
 
 # ==================== USER REGISTRATION FLOW ====================
@@ -672,7 +672,7 @@ class TestPasswordResetFlow:
         """Test completing password reset with valid token."""
         # First, request password reset
         from app.models.password_reset import PasswordResetToken
-        from app.core.security import TokenGenerator
+        from app.core.auth import TokenGenerator
 
         reset_token = TokenGenerator.generate_reset_token()
         reset_token_obj = PasswordResetToken.create_reset_token(
@@ -693,10 +693,10 @@ class TestPasswordResetFlow:
             "new_password": new_password
         }
         
-        response = integration_client.post("/api/v1/auth/password-reset/complete", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/confirm", json=reset_data)
         
         assert response.status_code == 200
-        assert "password has been reset" in response.json()["message"].lower()
+        assert "password reset successfully" in response.json()["message"].lower()
         
         # Verify can login with new password
         login_data = {
@@ -720,16 +720,21 @@ class TestPasswordResetFlow:
             "token": "invalid_token_12345",
             "new_password": "N3wP@ssw0rd!"
         }
-        
-        response = integration_client.post("/api/v1/auth/password-reset/complete", json=reset_data)
-        
+
+        response = integration_client.post("/api/v1/auth/password-reset/confirm", json=reset_data)
+
         assert response.status_code == 400
-        assert "invalid" in response.json()["detail"].lower()
+        detail = response.json()["detail"]
+
+        # Check error code
+        assert isinstance(detail, dict)
+        assert "error_code" in detail
+        assert detail["error_code"] == "RESET_001"
     
     def test_complete_password_reset_expired_token(self, integration_client: TestClient, test_user: User, db_session: Session):
         """Test password reset fails with expired token."""
         from app.models.password_reset import PasswordResetToken
-        from app.core.security import TokenGenerator
+        from app.core.auth import TokenGenerator
 
         # Create expired token
         reset_token = TokenGenerator.generate_reset_token()
@@ -750,10 +755,14 @@ class TestPasswordResetFlow:
             "new_password": "N3wP@ssw0rd!"
         }
         
-        response = integration_client.post("/api/v1/auth/password-reset/complete", json=reset_data)
+        response = integration_client.post("/api/v1/auth/password-reset/confirm", json=reset_data)
         
         assert response.status_code == 400
-        assert "expired" in response.json()["detail"].lower()
+        detail = response.json()["detail"]
+
+        assert isinstance(detail, dict)
+        assert "error_code" in detail
+        assert detail["error_code"] == "RESET_002"
         
         # Clean up
         db_session.delete(reset_token_obj)
@@ -793,14 +802,16 @@ class TestProtectedEndpoints:
     def test_update_user_profile(self, integration_authenticated_client: TestClient):
         """Test updating user profile."""
         update_data = {
-            "email": "newemail@example.com"
+            "email": "newemail@example.com",
+            "current_password": "Str0ngP@ssw0rd!"
         }
-        
+
         response = integration_authenticated_client.put("/api/v1/users/me", json=update_data)
-        
+
         assert response.status_code == 200
         data = response.json()
-        assert data["email"] == "newemail@example.com"
+        assert "email" in data["changes"]
+        assert "Profile updated successfully" in data["message"]
     
     def test_change_password(self, integration_authenticated_client: TestClient, test_password: str):
         """Test changing user password."""
@@ -883,12 +894,12 @@ class TestRoleBasedAccessControl:
         }
         
         response = integration_client.post(
-            "/api/v1/admin/user-roles/assign",
+            "/api/v1/admin/user-roles",
             json=assignment_data,
             headers={"Authorization": f"Bearer {access_token}"}
         )
-        
-        assert response.status_code == 200
+
+        assert response.status_code == 201
         
         # Verify assignment
         user_role = db_session.query(UserRole).filter_by(

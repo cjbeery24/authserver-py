@@ -26,7 +26,7 @@ from pathlib import Path
 # Add app directory to path so we can import our modules
 sys.path.append(str(Path(__file__).parent.parent))
 
-from app.core.security import RSAKeyManager
+from app.core.crypto import RSAKeyManager
 
 
 def generate_keys(key_size: int = 2048, output_format: str = "env"):

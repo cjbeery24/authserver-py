@@ -11,7 +11,9 @@ import json
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.core.security import PasswordHasher, AuthenticationManager, TokenManager
+from app.core.crypto import PasswordHasher
+from app.core.auth import AuthenticationManager
+from app.core.token import TokenManager
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
 from app.models.audit_log import AuditLog

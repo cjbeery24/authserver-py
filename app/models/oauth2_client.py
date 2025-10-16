@@ -6,7 +6,7 @@ from sqlalchemy import Column, String, Text, Boolean, DateTime, Index
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
-from app.core.security import ClientSecretHasher
+from app.core.crypto import ClientSecretHasher
 from sqlalchemy import event
 
 

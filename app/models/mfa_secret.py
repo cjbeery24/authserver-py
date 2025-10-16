@@ -52,7 +52,7 @@ class MFASecret(BaseModel):
 
     def generate_backup_codes(self, count=10, code_length=8, expiry_days=365):
         """Generate backup codes for MFA recovery."""
-        from app.core.security import SecureTokenHasher
+        from app.core.crypto import SecureTokenHasher
         
         codes = []
         for _ in range(count):
@@ -82,7 +82,7 @@ class MFASecret(BaseModel):
 
     def validate_backup_code(self, code):
         """Validate and consume a backup code using secure hash verification."""
-        from app.core.security import SecureTokenHasher
+        from app.core.crypto import SecureTokenHasher
         
         if not self.backup_codes or self.backup_codes == "{}" or self.is_backup_codes_expired:
             return False

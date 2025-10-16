@@ -17,7 +17,8 @@ from authlib.jose import jwt, Key
 import logging
 
 from app.core.config import settings
-from app.core.security import TokenManager, SecureTokenHasher
+from app.core.token import TokenManager
+from app.core.crypto import SecureTokenHasher
 from app.models.oauth2_client import OAuth2Client
 from app.models.oauth2_token import OAuth2Token
 from app.models.oauth2_authorization_code import OAuth2AuthorizationCode
@@ -239,7 +240,7 @@ class CustomOAuth2RequestValidator:
         
         Uses centralized AuthenticationManager for consistent authentication logic.
         """
-        from app.core.security import AuthenticationManager
+        from app.core.auth import AuthenticationManager
         
         # Use centralized authentication (no MFA for OAuth password grant)
         # Note: For OAuth, we don't use redis_client or track failed attempts here
@@ -587,7 +588,7 @@ async def create_oauth2_token_response_with_id_token(
     Returns:
         Token response dictionary
     """
-    from app.core.security import TokenManager
+    from app.core.token import TokenManager
     from app.models.user import User
     
     # Parse scopes

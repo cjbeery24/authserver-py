@@ -12,18 +12,9 @@ Tests for:
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from app.core.security import (
-    PasswordHasher,
-    PasswordStrength,
-    PasswordValidationError,
-    TokenManager,
-    TokenGenerator,
-    MFAHandler,
-    MFASessionManager,
-    PKCEHandler,
-    SecureTokenHasher,
-    RSAKeyManager
-)
+from app.core.crypto import PasswordHasher, SecureTokenHasher, RSAKeyManager
+from app.core.auth import PasswordStrength, PasswordValidationError, TokenGenerator, MFAHandler, MFASessionManager
+from app.core.token import TokenManager, PKCEHandler
 from app.core.config import settings
 
 

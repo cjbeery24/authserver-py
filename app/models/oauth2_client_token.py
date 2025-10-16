@@ -8,7 +8,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy import event
 
 from app.models.base import BaseModel
-from app.core.security import SecureTokenHasher
+from app.core.crypto import SecureTokenHasher
 
 
 class OAuth2ClientToken(BaseModel):

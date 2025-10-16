@@ -12,7 +12,8 @@ import pytest
 import json
 from unittest.mock import AsyncMock, patch
 
-from app.core.security import AuthenticationManager, PasswordHasher
+from app.core.auth import AuthenticationManager
+from app.core.crypto import PasswordHasher
 from app.core.cache import RBACCache
 from app.models.user import User
 from app.models.mfa_secret import MFASecret

@@ -16,7 +16,8 @@ import base64
 from app.core.database import get_db
 from app.core.redis import get_redis_dependency
 from app.core.config import settings
-from app.core.security import MFAHandler, SecureTokenHasher, AuthenticationManager
+from app.core.auth import MFAHandler, AuthenticationManager
+from app.core.crypto import SecureTokenHasher
 from app.core.errors import AuthError
 from app.models.user import User
 from app.models.mfa_secret import MFASecret
@@ -424,7 +425,7 @@ async def create_admin_mfa_bypass(
         )
     
     # Generate bypass token
-    from app.core.security import TokenGenerator
+    from app.core.auth import TokenGenerator
     bypass_token = TokenGenerator.generate_secure_token(length=48)
     
     # Store bypass token in Redis with expiration (redis_client injected via Depends)
@@ -584,7 +585,7 @@ async def request_mfa_recovery(
         )
     
     # Generate recovery token
-    from app.core.security import TokenGenerator
+    from app.core.auth import TokenGenerator
     recovery_token = TokenGenerator.generate_secure_token(length=48)
     
     # Store recovery token in Redis (24 hour expiration, redis_client injected via Depends)
