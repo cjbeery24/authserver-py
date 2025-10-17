@@ -86,11 +86,15 @@ else
     exit 1
 fi
 
+# Set unique project name for test environment
+PROJECT_NAME="authserver-test"
+COMPOSE_ARGS="-f docker-compose.test.yml --project-name $PROJECT_NAME"
+
 # Cleanup function
 cleanup() {
     if [ "$CLEANUP" = true ]; then
         print_status "Cleaning up test containers..."
-        $DOCKER_COMPOSE -f docker-compose.test.yml down --volumes --remove-orphans 2>/dev/null || true
+        $DOCKER_COMPOSE $COMPOSE_ARGS down --volumes --remove-orphans 2>/dev/null || true
     fi
 }
 
@@ -100,19 +104,19 @@ trap cleanup EXIT
 # Rebuild images if requested
 if [ "$REBUILD" = true ]; then
     print_status "Rebuilding Docker images..."
-    $DOCKER_COMPOSE -f docker-compose.test.yml build --no-cache
+    $DOCKER_COMPOSE $COMPOSE_ARGS build --no-cache
 fi
 
 # Start test environment
 print_status "Starting test environment..."
-$DOCKER_COMPOSE -f docker-compose.test.yml up -d postgres-test redis-test
+$DOCKER_COMPOSE $COMPOSE_ARGS up -d postgres-test redis-test
 
 # Wait for services to be ready
 print_status "Waiting for services to be ready..."
 timeout=60
 counter=0
 
-while ! $DOCKER_COMPOSE -f docker-compose.test.yml exec -T postgres-test pg_isready -U testuser -d authserver_test > /dev/null 2>&1; do
+while ! $DOCKER_COMPOSE $COMPOSE_ARGS exec -T postgres-test pg_isready -U testuser -d authserver_test > /dev/null 2>&1; do
     if [ $counter -ge $timeout ]; then
         print_error "Timeout waiting for PostgreSQL to be ready"
         exit 1
@@ -121,7 +125,7 @@ while ! $DOCKER_COMPOSE -f docker-compose.test.yml exec -T postgres-test pg_isre
     counter=$((counter + 1))
 done
 
-while ! $DOCKER_COMPOSE -f docker-compose.test.yml exec -T redis-test redis-cli ping > /dev/null 2>&1; do
+while ! $DOCKER_COMPOSE $COMPOSE_ARGS exec -T redis-test redis-cli ping > /dev/null 2>&1; do
     if [ $counter -ge $timeout ]; then
         print_error "Timeout waiting for Redis to be ready"
         exit 1
@@ -147,7 +151,7 @@ esac
 
 # Run tests
 print_status "Running $TEST_TYPE tests..."
-$DOCKER_COMPOSE -f docker-compose.test.yml run --rm test-runner sh -c "
+$DOCKER_COMPOSE $COMPOSE_ARGS run --rm test-runner sh -c "
     echo 'Running database migrations...' &&
     alembic upgrade head &&
     echo 'Starting tests...' &&
