@@ -18,6 +18,25 @@ from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
+# Define paths that don't require authentication
+EXCLUDED_AUTH_PATHS = [
+    "/health",  # Root health endpoint
+    "/api/v1/health",  # API health endpoint
+    "/api/v1/health/detailed",
+    "/api/v1/health/ready",
+    "/api/v1/health/live",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/v1/auth/register",
+    "/api/v1/auth/token",
+    "/api/v1/auth/token/mfa",
+    "/api/v1/auth/password-reset/request",
+    "/api/v1/auth/password-reset/confirm",
+    "/oauth/token",
+    "/.well-known/openid-configuration",
+]
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     """
@@ -48,19 +67,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             db_getter: Callable that returns database session
         """
         super().__init__(app)
-        self.exclude_paths = exclude_paths or [
-            "/health",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-            "/api/v1/auth/register",
-            "/api/v1/auth/token",
-            "/api/v1/auth/token/mfa",
-            "/api/v1/auth/password-reset/request",
-            "/api/v1/auth/password-reset/confirm",
-            "/oauth/token",
-            "/.well-known/openid-configuration",
-        ]
+        self.exclude_paths = exclude_paths or EXCLUDED_AUTH_PATHS
         if redis_getter is None or db_getter is None:
             raise ValueError("redis_getter and db_getter must be provided")
         self.redis_getter = redis_getter

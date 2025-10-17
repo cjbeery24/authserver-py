@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import OAuth2PasswordBearer
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
@@ -23,6 +24,7 @@ from app.middleware import (
     RequestResponseLoggingMiddleware,
     RequestValidationMiddleware,
 )
+from app.middleware.auth_middleware import EXCLUDED_AUTH_PATHS
 
 # Import dependencies for injection
 from app.core.redis import get_redis
@@ -103,6 +105,55 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.debug else None,
     lifespan=lifespan,
 )
+
+# Configure OpenAPI security scheme for Bearer token authentication in docs
+def custom_openapi():
+    """Custom OpenAPI schema generator with Bearer token security."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    # Get the original openapi method (avoid recursion)
+    original_openapi = FastAPI.openapi
+    openapi_schema = original_openapi(app)
+
+    # Ensure components exist
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+
+    # Add security scheme for Bearer tokens
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "JWT Authorization header using the Bearer scheme. Enter your token in the text input below."
+        }
+    }
+
+    # Define paths that don't require authentication (from AuthMiddleware exclude_paths)
+    # Include additional paths not in the middleware's exclude list
+    exclude_paths = set(EXCLUDED_AUTH_PATHS + [
+        "/",  # Root endpoint
+    ])
+
+    # Add security requirements to paths that require authentication
+    if "paths" in openapi_schema:
+        for path, methods in openapi_schema["paths"].items():
+            # Skip if path is in exclude list
+            if path in exclude_paths:
+                continue
+
+            # Add security requirement to each method in this path
+            for method, operation in methods.items():
+                if method.lower() in ["get", "post", "put", "delete", "patch"]:
+                    if "security" not in operation:
+                        operation["security"] = [{"BearerAuth": []}]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+# Override the default openapi method
+app.openapi = custom_openapi
 
 # Add CORS middleware
 if settings.cors_enabled:

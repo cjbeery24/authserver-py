@@ -9,10 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 class BaseSchema(BaseModel):
     """Base schema with common configuration."""
     model_config = ConfigDict(
-        from_attributes=True,
-        json_encoders={
-            datetime: lambda v: v.isoformat()
-        }
+        from_attributes=True
     )
 
 class TimestampSchema(BaseSchema):
