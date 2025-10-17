@@ -27,35 +27,97 @@ from app.core.config import settings
 
 @pytest.fixture(scope="session")
 def test_db_engine():
-    """Create a test database engine with in-memory SQLite."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    yield engine
-    Base.metadata.drop_all(bind=engine)
-    engine.dispose()
+    """Create a test database engine - uses PostgreSQL in Docker, SQLite locally."""
+    import os
+    from app.core.config import settings
+
+    # Check if we should use PostgreSQL (Docker environment)
+    database_url = os.getenv('DATABASE_URL') or settings.database_url
+    use_postgresql = database_url and database_url.startswith('postgresql://')
+
+    if use_postgresql:
+        # Use PostgreSQL for Docker tests
+        engine = create_engine(
+            database_url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
+        # Create all tables
+        Base.metadata.create_all(bind=engine)
+        yield engine
+        # Clean up - drop all tables for next test
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+    else:
+        # Use SQLite for local tests
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        yield engine
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
 
 
 @pytest.fixture(scope="function")
 def db_session(test_db_engine):
     """Create a fresh database session for each test."""
+    import os
+    from sqlalchemy import text
+
+    # Check if we're using PostgreSQL
+    database_url = os.getenv('DATABASE_URL', '')
+    use_postgresql = database_url.startswith('postgresql://')
+
     TestingSessionLocal = sessionmaker(
         autocommit=False,
         autoflush=False,
         bind=test_db_engine,
     )
     session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.rollback()
-        session.close()
-        # Clear all tables for next test
-        Base.metadata.drop_all(bind=test_db_engine)
-        Base.metadata.create_all(bind=test_db_engine)
+
+    if use_postgresql:
+        # For PostgreSQL, truncate all tables to ensure clean state
+        # This is more reliable than nested transactions for test isolation
+        try:
+            # Disable foreign key checks temporarily
+            session.execute(text("SET CONSTRAINTS ALL DEFERRED"))
+
+            # Truncate all tables in dependency order (reverse of creation)
+            tables_to_truncate = [
+                'user_tokens', 'user_roles', 'password_reset_tokens',
+                'mfa_secrets', 'audit_logs', 'oauth2_authorization_codes',
+                'oauth2_client_tokens', 'oauth2_tokens', 'oauth2_clients',
+                'users', 'roles', 'permissions', 'role_permissions'
+            ]
+
+            for table in tables_to_truncate:
+                try:
+                    session.execute(text(f'TRUNCATE TABLE {table} CASCADE'))
+                except Exception:
+                    # Table might not exist, skip
+                    pass
+
+            # Re-enable foreign key checks
+            session.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+            session.commit()
+
+            yield session
+        finally:
+            session.rollback()
+            session.close()
+    else:
+        # For SQLite, use the old approach of dropping/recreating tables
+        try:
+            yield session
+        finally:
+            session.rollback()
+            session.close()
+            # Clear all tables for next test
+            Base.metadata.drop_all(bind=test_db_engine)
+            Base.metadata.create_all(bind=test_db_engine)
 
 
 @pytest.fixture(scope="function")
@@ -357,6 +419,7 @@ def superuser_authenticated_client(client, db_session):
     from app.models.role import Role
     from app.models.user_role import UserRole
     from app.core.crypto import PasswordHasher, TokenManager
+    from datetime import datetime, timezone
 
     # Create superuser role if it doesn't exist
     superuser_role = db_session.query(Role).filter(Role.name == "superuser").first()
@@ -373,6 +436,12 @@ def superuser_authenticated_client(client, db_session):
         password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "superuser"),
         is_active=True
     )
+
+    # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
+    now = datetime.now(timezone.utc)
+    user.created_at = now
+    user.updated_at = now
+
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -430,6 +499,7 @@ def test_user(db_session):
     """Create a test user."""
     from app.models.user import User
     from app.core.crypto import PasswordHasher
+    from datetime import datetime, timezone
 
     user = User(
         username="testuser",
@@ -437,6 +507,12 @@ def test_user(db_session):
         password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "testuser"),
         is_active=True
     )
+
+    # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
+    now = datetime.now(timezone.utc)
+    user.created_at = now
+    user.updated_at = now
+
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -451,6 +527,7 @@ def admin_user(db_session):
     from app.models.role import Role
     from app.models.user_role import UserRole
     from app.core.crypto import PasswordHasher
+    from datetime import datetime, timezone
 
     # Create admin role if it doesn't exist
     admin_role = db_session.query(Role).filter(Role.name == "admin").first()
@@ -467,6 +544,12 @@ def admin_user(db_session):
         password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "adminuser"),
         is_active=True
     )
+
+    # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
+    now = datetime.now(timezone.utc)
+    user.created_at = now
+    user.updated_at = now
+
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)

@@ -80,13 +80,21 @@ class TestUserProfileManagement:
 
     def test_update_user_profile_duplicate_email(self, integration_authenticated_client: TestClient, test_user: User, db_session: Session):
         """Test updating user profile with duplicate email."""
-        # Create another user
+        from datetime import datetime, timezone
+
+        # Create another user with UTC timestamps (database schema uses timezone-aware datetimes)
         other_user = User(
             username="otheruser",
             email="other@example.com",
             password_hash="dummy_hash",
             is_active=True
         )
+
+        # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
+        now = datetime.now(timezone.utc)
+        other_user.created_at = now
+        other_user.updated_at = now
+
         db_session.add(other_user)
         db_session.commit()
 
