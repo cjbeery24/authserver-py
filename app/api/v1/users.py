@@ -236,7 +236,7 @@ async def get_security_settings(
         
         if mfa_secret.backup_codes and mfa_secret.backup_codes != "{}":
             backup_codes_dict = json.loads(mfa_secret.backup_codes)
-            backup_codes_count = sum(1 for used in backup_codes_dict.values() if not used)
+            backup_codes_count = len(backup_codes_dict)  # All remaining codes are unused
     
     # Count active sessions (tokens)
     active_sessions = db.query(UserToken).filter(

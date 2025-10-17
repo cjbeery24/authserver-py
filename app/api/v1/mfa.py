@@ -91,15 +91,15 @@ async def get_mfa_status(
             backup_codes_count=0,
             backup_codes_expired=False
         )
-    
-    # Count unused backup codes
+
+    # Count total backup codes available
     backup_codes_dict = json.loads(mfa_secret.backup_codes) if mfa_secret.backup_codes else {}
-    unused_codes = sum(1 for used in backup_codes_dict.values() if not used)
+    total_codes = len(backup_codes_dict)
     
     return MFAStatusResponse(
         enabled=mfa_secret.is_enabled,
         has_backup_codes=len(backup_codes_dict) > 0,
-        backup_codes_count=unused_codes,
+        backup_codes_count=total_codes,
         backup_codes_expired=mfa_secret.is_backup_codes_expired
     )
 
@@ -347,10 +347,10 @@ async def get_backup_codes_status(
             detail="MFA is not enabled"
         )
     
-    # Count unused backup codes
+    # Count backup codes - all remaining codes are unused since used ones are removed
     backup_codes_dict = json.loads(mfa_secret.backup_codes) if mfa_secret.backup_codes else {}
-    unused_codes = sum(1 for used in backup_codes_dict.values() if not used)
     total_codes = len(backup_codes_dict)
+    unused_codes = total_codes  # All remaining codes are unused
     
     return {
         "total_codes": total_codes,

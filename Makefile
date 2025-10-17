@@ -11,12 +11,19 @@ help:
 	@echo "  make dev              Set up development environment"
 	@echo ""
 	@echo "🧪 Testing:"
-	@echo "  make test             Run all tests (local SQLite)"
-	@echo "  make test-unit        Run unit tests only"
-	@echo "  make test-integration Run integration tests only"
-	@echo "  make test-docker      Run all tests in Docker (PostgreSQL)"
-	@echo "  make test-docker-unit Run unit tests in Docker"
-	@echo "  make test-docker-int  Run integration tests in Docker"
+	@echo "  make test                      Run all tests (local SQLite)"
+	@echo "  make test-unit                 Run unit tests only"
+	@echo "  make test-integration          Run integration tests only"
+	@echo "  make test-unit-file            Run specific unit test file"
+	@echo "  make test-integration-file     Run specific integration test file"
+	@echo "  make test-docker               Run all tests in Docker (PostgreSQL)"
+	@echo "  make test-docker-unit          Run unit tests in Docker"
+	@echo "  make test-docker-int           Run integration tests in Docker"
+	@echo "  make test-docker-file          Run specific test file in Docker"
+	@echo ""
+	@echo "📝 Test File Examples:"
+	@echo "  make test-docker-file FILE=test_mfa_flows.py TYPE=int"
+	@echo "  make test-docker-file FILE=test_mfa_flows.py TYPE=int NAME=TestMFAStatus::test_get_mfa_status_disabled"
 	@echo ""
 	@echo "🐳 Docker:"
 	@echo "  make docker-build     Build Docker images"
@@ -69,6 +76,66 @@ test-integration:
 	@echo "🧪 Running integration tests..."
 	poetry run pytest tests/integration/ -v --tb=short --cov=app --cov-report=term-missing
 
+test-integration-file:
+	@echo "🧪 Running specific integration test file..."
+	@if [ -z "$(FILE)" ] || [ -z "$(TYPE)" ]; then \
+		echo "❌ ERROR: Please specify FILE and TYPE variables"; \
+		echo "Usage: make test-integration-file FILE=test_mfa_flows.py TYPE=int [NAME=TestMFAStatus::test_get_mfa_status_disabled]"; \
+		exit 1; \
+	fi; \
+	if [ "$(TYPE)" != "int" ] && [ "$(TYPE)" != "unit" ]; then \
+		echo "❌ ERROR: TYPE must be 'int' or 'unit'"; \
+		exit 1; \
+	fi; \
+	if [[ "$(FILE)" == tests/* ]]; then \
+		FULL_PATH="$(FILE)"; \
+	else \
+		if [ "$(TYPE)" = "int" ]; then \
+			FULL_PATH="tests/integration/$(FILE)"; \
+		else \
+			FULL_PATH="tests/unit/$(FILE)"; \
+		fi; \
+	fi; \
+	if [ ! -f "$$FULL_PATH" ]; then \
+		echo "❌ ERROR: Test file $$FULL_PATH does not exist"; \
+		exit 1; \
+	fi; \
+	if [ -n "$(NAME)" ]; then \
+		poetry run pytest $$FULL_PATH::$(NAME) -v --tb=short --cov=app --cov-report=term-missing; \
+	else \
+		poetry run pytest $$FULL_PATH -v --tb=short --cov=app --cov-report=term-missing; \
+	fi
+
+test-unit-file:
+	@echo "🧪 Running specific unit test file..."
+	@if [ -z "$(FILE)" ] || [ -z "$(TYPE)" ]; then \
+		echo "❌ ERROR: Please specify FILE and TYPE variables"; \
+		echo "Usage: make test-unit-file FILE=test_authentication.py TYPE=unit [NAME=TestAuthentication::test_verify_password]"; \
+		exit 1; \
+	fi; \
+	if [ "$(TYPE)" != "int" ] && [ "$(TYPE)" != "unit" ]; then \
+		echo "❌ ERROR: TYPE must be 'int' or 'unit'"; \
+		exit 1; \
+	fi; \
+	if [[ "$(FILE)" == tests/* ]]; then \
+		FULL_PATH="$(FILE)"; \
+	else \
+		if [ "$(TYPE)" = "int" ]; then \
+			FULL_PATH="tests/integration/$(FILE)"; \
+		else \
+			FULL_PATH="tests/unit/$(FILE)"; \
+		fi; \
+	fi; \
+	if [ ! -f "$$FULL_PATH" ]; then \
+		echo "❌ ERROR: Test file $$FULL_PATH does not exist"; \
+		exit 1; \
+	fi; \
+	if [ -n "$(NAME)" ]; then \
+		poetry run pytest $$FULL_PATH::$(NAME) -v --tb=short --cov=app --cov-report=term-missing; \
+	else \
+		poetry run pytest $$FULL_PATH -v --tb=short --cov=app --cov-report=term-missing; \
+	fi
+
 # Docker-based testing (PostgreSQL)
 test-docker:
 	@echo "🐳 Running all tests in Docker..."
@@ -81,6 +148,36 @@ test-docker-unit:
 test-docker-int:
 	@echo "🐳 Running integration tests in Docker..."
 	./scripts/test.sh --integration
+
+test-docker-file:
+	@echo "🐳 Running specific test file in Docker..."
+	@if [ -z "$(FILE)" ] || [ -z "$(TYPE)" ]; then \
+		echo "❌ ERROR: Please specify FILE and TYPE variables"; \
+		echo "Usage: make test-docker-file FILE=test_mfa_flows.py TYPE=int [NAME=TestMFAStatus::test_get_mfa_status_disabled]"; \
+		exit 1; \
+	fi; \
+	if [ "$(TYPE)" != "int" ] && [ "$(TYPE)" != "unit" ]; then \
+		echo "❌ ERROR: TYPE must be 'int' or 'unit'"; \
+		exit 1; \
+	fi; \
+	if [[ "$(FILE)" == tests/* ]]; then \
+		FULL_PATH="$(FILE)"; \
+	else \
+		if [ "$(TYPE)" = "int" ]; then \
+			FULL_PATH="tests/integration/$(FILE)"; \
+		else \
+			FULL_PATH="tests/unit/$(FILE)"; \
+		fi; \
+	fi; \
+	if [ ! -f "$$FULL_PATH" ]; then \
+		echo "❌ ERROR: Test file $$FULL_PATH does not exist"; \
+		exit 1; \
+	fi; \
+	ARGS="--file $$FULL_PATH"; \
+	if [ -n "$(NAME)" ]; then \
+		ARGS="$$ARGS --name $(NAME)"; \
+	fi; \
+	./scripts/test.sh $$ARGS
 
 test-docker-rebuild:
 	@echo "🐳 Running tests in Docker (rebuilding images)..."

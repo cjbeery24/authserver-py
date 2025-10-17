@@ -37,6 +37,8 @@ fi
 
 # Parse command line arguments
 TEST_TYPE="all"
+TEST_FILE=""
+TEST_NAME=""
 REBUILD=false
 CLEANUP=true
 
@@ -48,6 +50,24 @@ while [[ $# -gt 0 ]]; do
             ;;
         --integration)
             TEST_TYPE="integration"
+            shift
+            ;;
+        --file=*)
+            TEST_FILE="${1#*=}"
+            shift
+            ;;
+        --file)
+            TEST_FILE="$2"
+            shift
+            shift
+            ;;
+        --name=*)
+            TEST_NAME="${1#*=}"
+            shift
+            ;;
+        --name)
+            TEST_NAME="$2"
+            shift
             shift
             ;;
         --rebuild)
@@ -62,11 +82,13 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --unit          Run only unit tests"
-            echo "  --integration   Run only integration tests"
-            echo "  --rebuild       Rebuild Docker images before testing"
-            echo "  --no-cleanup    Don't clean up containers after testing"
-            echo "  -h, --help      Show this help message"
+            echo "  --unit                Run only unit tests"
+            echo "  --integration         Run only integration tests"
+            echo "  --file FILE           Run specific test file (must be in tests/ directory)"
+            echo "  --name NAME           Run specific test method (e.g., TestClass::test_method)"
+            echo "  --rebuild             Rebuild Docker images before testing"
+            echo "  --no-cleanup          Don't clean up containers after testing"
+            echo "  -h, --help            Show this help message"
             exit 0
             ;;
         *)
@@ -136,21 +158,48 @@ done
 
 print_success "Services are ready!"
 
-# Determine test command based on type
-case $TEST_TYPE in
-    "unit")
-        TEST_CMD="pytest tests/unit/ -v --tb=short --cov=app --cov-report=term-missing"
-        ;;
-    "integration")
-        TEST_CMD="pytest tests/integration/ -v --tb=short --cov=app --cov-report=term-missing"
-        ;;
-    "all")
-        TEST_CMD="pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-report=html"
-        ;;
-esac
+# Determine test command based on type and file
+if [ -n "$TEST_FILE" ]; then
+    # Validate that the file exists and is in the tests directory
+    if [ ! -f "$TEST_FILE" ]; then
+        print_error "Test file $TEST_FILE does not exist"
+        exit 1
+    fi
+    if [[ "$TEST_FILE" != tests/* ]]; then
+        print_error "Test file must be in the tests/ directory"
+        exit 1
+    fi
+
+    # Construct pytest command
+    TEST_CMD="pytest $TEST_FILE"
+    if [ -n "$TEST_NAME" ]; then
+        TEST_CMD="$TEST_CMD::$TEST_NAME"
+    fi
+    TEST_CMD="$TEST_CMD -v --tb=short --cov=app --cov-report=term-missing"
+else
+    case $TEST_TYPE in
+        "unit")
+            TEST_CMD="pytest tests/unit/ -v --tb=short --cov=app --cov-report=term-missing"
+            ;;
+        "integration")
+            TEST_CMD="pytest tests/integration/ -v --tb=short --cov=app --cov-report=term-missing"
+            ;;
+        "all")
+            TEST_CMD="pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-report=html"
+            ;;
+    esac
+fi
 
 # Run tests
-print_status "Running $TEST_TYPE tests..."
+if [ -n "$TEST_FILE" ]; then
+    if [ -n "$TEST_NAME" ]; then
+        print_status "Running specific test: $TEST_FILE::$TEST_NAME"
+    else
+        print_status "Running specific test file: $TEST_FILE"
+    fi
+else
+    print_status "Running $TEST_TYPE tests..."
+fi
 $DOCKER_COMPOSE $COMPOSE_ARGS run --rm test-runner sh -c "
     echo 'Running database migrations...' &&
     alembic upgrade head &&
