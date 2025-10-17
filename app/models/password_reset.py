@@ -38,14 +38,8 @@ class PasswordResetToken(BaseModel):
     @property
     def is_expired(self) -> bool:
         """Check if the reset token has expired."""
-        now = datetime.now(timezone.utc)
-        # Ensure both datetimes are timezone-aware for comparison
-        if self.expires_at.tzinfo is None:
-            # If expires_at is naive, assume it's UTC
-            expires_at_utc = self.expires_at.replace(tzinfo=timezone.utc)
-        else:
-            expires_at_utc = self.expires_at
-        return now > expires_at_utc
+        # All database datetimes are now timezone-aware
+        return datetime.now(timezone.utc) > self.expires_at
 
     @property
     def is_valid(self) -> bool:

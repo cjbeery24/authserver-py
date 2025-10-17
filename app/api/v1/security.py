@@ -220,10 +220,11 @@ async def get_user_security_audit(
             UserToken.expires_at > datetime.now(timezone.utc)
         ).count()
         
-        # Get recent audit logs
+        # Get recent audit logs with proper date filtering
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
         recent_logs = db.query(AuditLog).filter(
             AuditLog.user_id == current_user.id,
-            AuditLog.created_at > datetime.now(timezone.utc) - timedelta(days=30)
+            AuditLog.created_at > thirty_days_ago
         ).order_by(AuditLog.created_at.desc()).limit(10).all()
         
         # Convert audit logs to security events

@@ -35,13 +35,8 @@ class MFASecret(BaseModel):
         if not self.backup_codes_expiry:
             return False
 
-        # Ensure we compare timezone-aware datetimes
-        expiry_time = self.backup_codes_expiry
-        if expiry_time.tzinfo is None:
-            # If stored as naive datetime, assume it's UTC
-            expiry_time = expiry_time.replace(tzinfo=timezone.utc)
-
-        return datetime.now(timezone.utc) > expiry_time
+        # All database datetimes are now timezone-aware
+        return datetime.now(timezone.utc) > self.backup_codes_expiry
 
     def generate_secret(self):
         """Generate a new TOTP secret."""
