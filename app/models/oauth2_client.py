@@ -6,11 +6,12 @@ from sqlalchemy import Column, String, Text, Boolean, DateTime, Index
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 from app.core.crypto import ClientSecretHasher
 from sqlalchemy import event
 
 
-class OAuth2Client(BaseModel):
+class OAuth2Client(BaseModel, TimestampMixin):
     """OAuth 2.0 Client model for OpenID Connect applications."""
 
     __tablename__ = "oauth2_clients"

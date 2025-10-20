@@ -10,9 +10,10 @@ from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, DateT
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class MFASecret(BaseModel):
+class MFASecret(BaseModel, TimestampMixin):
     """MFA Secret model for TOTP authentication."""
 
     __tablename__ = "mfa_secrets"

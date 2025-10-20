@@ -437,11 +437,6 @@ def superuser_authenticated_client(client, db_session):
         is_active=True
     )
 
-    # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
-    now = datetime.now(timezone.utc)
-    user.created_at = now
-    user.updated_at = now
-
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -508,11 +503,6 @@ def test_user(db_session):
         is_active=True
     )
 
-    # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
-    now = datetime.now(timezone.utc)
-    user.created_at = now
-    user.updated_at = now
-
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -544,11 +534,6 @@ def admin_user(db_session):
         password_hash=PasswordHasher.hash_password("Str0ngP@ssw0rd!", "adminuser"),
         is_active=True
     )
-
-    # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
-    now = datetime.now(timezone.utc)
-    user.created_at = now
-    user.updated_at = now
 
     db_session.add(user)
     db_session.commit()

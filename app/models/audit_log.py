@@ -6,9 +6,10 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, Index, 
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class AuditLog(BaseModel):
+class AuditLog(BaseModel, TimestampMixin):
     """Audit Log model for security event tracking."""
 
     __tablename__ = "audit_logs"

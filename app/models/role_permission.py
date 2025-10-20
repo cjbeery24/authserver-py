@@ -5,9 +5,10 @@ RolePermission junction table for many-to-many role-permission relationships.
 from sqlalchemy import Column, Integer, ForeignKey, UniqueConstraint, Index
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class RolePermission(BaseModel):
+class RolePermission(BaseModel, TimestampMixin):
     """Junction table for role-permission many-to-many relationships."""
 
     __tablename__ = "role_permissions"

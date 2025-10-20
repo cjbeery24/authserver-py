@@ -5,9 +5,10 @@ Role model for RBAC (Role-Based Access Control).
 from sqlalchemy import Column, String, Text
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class Role(BaseModel):
+class Role(BaseModel, TimestampMixin):
     """Role model for RBAC."""
 
     __tablename__ = "roles"

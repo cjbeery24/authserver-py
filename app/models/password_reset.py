@@ -7,9 +7,10 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, I
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class PasswordResetToken(BaseModel):
+class PasswordResetToken(BaseModel, TimestampMixin):
     """
     Model for storing password reset tokens.
     

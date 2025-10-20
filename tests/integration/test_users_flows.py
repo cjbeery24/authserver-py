@@ -90,11 +90,6 @@ class TestUserProfileManagement:
             is_active=True
         )
 
-        # Always set timezone-aware UTC timestamps since our database schema uses DateTime(timezone=True)
-        now = datetime.now(timezone.utc)
-        other_user.created_at = now
-        other_user.updated_at = now
-
         db_session.add(other_user)
         db_session.commit()
 

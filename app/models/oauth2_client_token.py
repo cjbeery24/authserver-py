@@ -8,10 +8,11 @@ from sqlalchemy.orm import relationship
 from sqlalchemy import event
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 from app.core.crypto import SecureTokenHasher
 
 
-class OAuth2ClientToken(BaseModel):
+class OAuth2ClientToken(BaseModel, TimestampMixin):
     """
     OAuth 2.0 Client Token model for managing client registration tokens.
 

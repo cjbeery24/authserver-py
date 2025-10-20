@@ -5,9 +5,10 @@ Permission model for RBAC (Role-Based Access Control).
 from sqlalchemy import Column, String, UniqueConstraint, Index
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class Permission(BaseModel):
+class Permission(BaseModel, TimestampMixin):
     """Permission model for RBAC."""
 
     __tablename__ = "permissions"

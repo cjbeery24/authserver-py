@@ -7,9 +7,10 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, Foreign
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class UserToken(BaseModel):
+class UserToken(BaseModel, TimestampMixin):
     """
     Model for tracking user tokens to enable selective invalidation.
 

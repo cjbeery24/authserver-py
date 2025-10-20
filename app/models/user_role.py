@@ -5,9 +5,10 @@ UserRole junction table for many-to-many user-role relationships.
 from sqlalchemy import Column, Integer, ForeignKey, UniqueConstraint, Index
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class UserRole(BaseModel):
+class UserRole(BaseModel, TimestampMixin):
     """Junction table for user-role many-to-many relationships."""
 
     __tablename__ = "user_roles"

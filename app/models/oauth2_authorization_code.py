@@ -7,9 +7,10 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Inde
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 
 
-class OAuth2AuthorizationCode(BaseModel):
+class OAuth2AuthorizationCode(BaseModel, TimestampMixin):
     """
     OAuth 2.0 Authorization Code model for secure storage of authorization codes.
 

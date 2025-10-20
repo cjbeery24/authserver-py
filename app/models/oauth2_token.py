@@ -7,10 +7,11 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Inde
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
+from app.models.mixins import TimestampMixin
 from app.core.config import settings
 
 
-class OAuth2Token(BaseModel):
+class OAuth2Token(BaseModel, TimestampMixin):
     """OAuth 2.0 Token model for storing access and refresh tokens."""
 
     __tablename__ = "oauth2_tokens"

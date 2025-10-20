@@ -194,6 +194,7 @@ class DashboardStatsResponse(BaseModel):
     total_permissions: int
     recent_logins: int
     failed_logins_24h: int
+    recent_registrations: int
 
     class Config:
         json_schema_extra = {
@@ -204,7 +205,8 @@ class DashboardStatsResponse(BaseModel):
                 "total_roles": 5,
                 "total_permissions": 45,
                 "recent_logins": 320,
-                "failed_logins_24h": 12
+                "failed_logins_24h": 12,
+                "recent_registrations": 45
             }
         }
 
@@ -1503,7 +1505,12 @@ async def get_dashboard_stats(
         AuditLog.success == False,
         AuditLog.created_at >= twenty_four_hours_ago
     ).count()
-    
+
+    # Count recent registrations (last 7 days)
+    recent_registrations = db.query(User).filter(
+        User.created_at >= seven_days_ago
+    ).count()
+
     return DashboardStatsResponse(
         total_users=total_users,
         active_users=active_users,
@@ -1511,6 +1518,7 @@ async def get_dashboard_stats(
         total_roles=total_roles,
         total_permissions=total_permissions,
         recent_logins=recent_logins,
-        failed_logins_24h=failed_logins_24h
+        failed_logins_24h=failed_logins_24h,
+        recent_registrations=recent_registrations
     )
 
