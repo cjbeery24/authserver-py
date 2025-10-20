@@ -646,11 +646,10 @@ async def _handle_authorization_code_grant(
     # Validate client credentials
     client = db.query(OAuth2Client).filter(
         OAuth2Client.client_id == client_id,
-        OAuth2Client.client_secret == client_secret,
         OAuth2Client.is_active == True
     ).first()
 
-    if not client:
+    if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
     # Validate authorization code
@@ -697,11 +696,10 @@ async def _handle_refresh_token_grant(
     # Validate client credentials
     client = db.query(OAuth2Client).filter(
         OAuth2Client.client_id == client_id,
-        OAuth2Client.client_secret == client_secret,
         OAuth2Client.is_active == True
     ).first()
 
-    if not client:
+    if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
     # Validate refresh token
@@ -747,11 +745,10 @@ async def _handle_client_credentials_grant(
     # Validate client credentials
     client = db.query(OAuth2Client).filter(
         OAuth2Client.client_id == client_id,
-        OAuth2Client.client_secret == client_secret,
         OAuth2Client.is_active == True
     ).first()
 
-    if not client:
+    if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
     # Validate and normalize scopes
@@ -777,11 +774,10 @@ async def _handle_password_grant(
     # Validate client credentials
     client = db.query(OAuth2Client).filter(
         OAuth2Client.client_id == client_id,
-        OAuth2Client.client_secret == client_secret,
         OAuth2Client.is_active == True
     ).first()
 
-    if not client:
+    if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
     # Authenticate user

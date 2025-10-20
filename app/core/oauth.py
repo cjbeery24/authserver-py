@@ -545,8 +545,21 @@ def create_authorization_server(db_session):
     # Create validator
     validator = CustomOAuth2RequestValidator(db_session)
     
+    # Create query_client function for Authlib
+    def query_client(client_id):
+        """Query client by ID."""
+        return validator.authenticate_client_id(client_id)
+    
+    # Create save_token function for Authlib
+    def save_token(token, request):
+        """Save token to database."""
+        validator.save_token(token, request)
+    
     # Create authorization server using Authlib's core AuthorizationServer
-    server = AuthorizationServer()
+    server = AuthorizationServer(
+        query_client=query_client,
+        save_token=save_token
+    )
     
     # Add grants
     server.register_grant(AuthorizationCodeGrant)
@@ -554,12 +567,17 @@ def create_authorization_server(db_session):
     server.register_grant(ClientCredentialsGrant)
     server.register_grant(PasswordGrant)
     
-    # Store database session for use in grants
+    # Store database session and validator for use in custom methods
     server.db_session = db_session
     server.validator = validator
     
     # Add method to create token response with ID tokens
     server.create_token_response = lambda **kwargs: create_oauth2_token_response_with_id_token(db_session, **kwargs)
+    
+    # Add validator methods to server for easy access
+    server.save_authorization_code = validator.save_authorization_code
+    server.delete_authorization_code = validator.delete_authorization_code
+    server.authenticate_user = validator.authenticate_user
     
     return server
 
