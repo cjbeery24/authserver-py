@@ -551,21 +551,26 @@ def admin_user(db_session):
 
 @pytest.fixture(scope="function")
 def test_oauth_client(db_session):
-    """Create a test OAuth2 client."""
+    """Create a test OAuth2 client with a known plain text secret."""
     from app.models.oauth2_client import OAuth2Client
 
+    # Create client with a plain secret that will be hashed automatically
+    plain_secret = "test_client_secret"
     client = OAuth2Client(
         client_id="test_client_id",
-        client_secret="test_client_secret",
+        client_secret=plain_secret,
         name="Test OAuth Client",
         redirect_uris='["http://localhost:3000/callback"]',
-        scopes='["openid", "profile", "email"]',
+        scopes='["openid", "profile", "email", "read", "write"]',
         is_active=True
     )
 
     db_session.add(client)
     db_session.commit()
     db_session.refresh(client)
+
+    # Store the plain secret as an attribute for tests to use
+    client._test_plain_secret = plain_secret
 
     yield client
 

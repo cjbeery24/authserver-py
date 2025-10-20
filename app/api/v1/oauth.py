@@ -77,14 +77,21 @@ def create_oauth2_error_response(error: OAuth2Error) -> JSONResponse:
     )
 
 
-def validate_redirect_uri_security(redirect_uri: str) -> None:
+def validate_redirect_uri_security(redirect_uri) -> None:
     """
     Validate redirect URI for security vulnerabilities.
 
     Enforces HTTPS requirement and blocks malicious schemes.
+    Accepts either string or Pydantic HttpUrl objects.
     """
+    # Convert HttpUrl to string if necessary
+    if hasattr(redirect_uri, '__str__'):
+        redirect_uri_str = str(redirect_uri)
+    else:
+        redirect_uri_str = redirect_uri
+        
     try:
-        parsed = urlparse(redirect_uri)
+        parsed = urlparse(redirect_uri_str)
     except Exception:
         raise OAuth2Error("invalid_request", "Invalid redirect_uri format")
 
