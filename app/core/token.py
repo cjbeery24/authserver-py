@@ -474,7 +474,7 @@ class TokenManager:
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
-            "token_type": "Bearer",
+            "token_type": "bearer",
             "expires_in": settings.jwt_access_token_expire_minutes * 60,  # seconds
         }
 
@@ -498,7 +498,7 @@ class TokenManager:
 
         response = {
             "access_token": access_token,
-            "token_type": "Bearer",
+            "token_type": "bearer",
             "expires_in": settings.jwt_access_token_expire_minutes * 60,  # seconds
             "scope": " ".join(scopes) if scopes else ""
         }

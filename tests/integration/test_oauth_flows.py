@@ -290,7 +290,7 @@ class TestOAuthAuthorizationCodeFlow:
         assert "access_token" in tokens
         assert "refresh_token" in tokens
         assert "id_token" in tokens
-        assert tokens["token_type"] == "Bearer"
+        assert tokens["token_type"] == "bearer"
 
         # Step 4: Test userinfo endpoint
         userinfo_response = integration_client.get(
@@ -367,7 +367,7 @@ class TestOAuthClientCredentialsFlow:
         tokens = response.json()
 
         assert "access_token" in tokens
-        assert tokens["token_type"] == "Bearer"
+        assert tokens["token_type"] == "bearer"
         # Client credentials flow doesn't return refresh token
         assert "refresh_token" not in tokens
 
