@@ -265,12 +265,13 @@ class TokenManager:
         return encoded_jwt
 
     @staticmethod
-    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True) -> str:
+    def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, include_jti: bool = True, scopes: Optional[List[str]] = None) -> str:
         """
         Create a JWT access token.
 
         The data dict should include user information and optionally 'roles' (list of role names).
         Roles will be included in the token payload for authorization by consuming applications.
+        Scopes can be provided separately or included in the data dict.
         """
         to_encode = data.copy()
         if expires_delta:
@@ -284,6 +285,15 @@ class TokenManager:
         if include_jti:
             jti = secrets.token_hex(16)  # Generate unique JTI
             to_encode.update({"jti": jti})
+
+        # Include scopes if provided (for OAuth2/OIDC)
+        if scopes:
+            to_encode["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
+        elif "scope" not in to_encode and "scopes" in to_encode:
+            # Convert scopes list to scope string if in data
+            scopes_list = to_encode.pop("scopes", [])
+            if scopes_list:
+                to_encode["scope"] = " ".join(scopes_list) if isinstance(scopes_list, list) else scopes_list
 
         # Add Key ID to header for JWKS support
         headers = {}
@@ -483,8 +493,8 @@ class TokenManager:
         Returns:
             Token response dictionary
         """
-        # Create access token
-        access_token = TokenManager.create_access_token(user_data)
+        # Create access token with scopes embedded in the JWT
+        access_token = TokenManager.create_access_token(user_data, scopes=scopes)
 
         response = {
             "access_token": access_token,

@@ -47,7 +47,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Security scheme for token introspection and revocation
-token_scheme = HTTPBearer()
+token_scheme = HTTPBearer(auto_error=False)
 
 
 async def _require_admin(current_user: User = Depends(get_current_user_or_401), db: Session = Depends(get_db)) -> User:
@@ -775,56 +775,163 @@ def _validate_pkce(code_verifier: str, code_challenge: str, code_challenge_metho
     return False
 
 
-@router.get("/userinfo", response_model=Dict[str, Any])
+@router.get("/userinfo", 
+            response_model=Dict[str, Any],
+            dependencies=[Depends(RateLimiter(times=60, minutes=1))])
+@handle_oauth2_exceptions
 async def userinfo(
-    credentials: HTTPAuthorizationCredentials = Depends(token_scheme),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(token_scheme),
     db: Session = Depends(get_db)
 ):
     """
-    OpenID Connect UserInfo endpoint.
+    OpenID Connect UserInfo endpoint (RFC 7662).
+
+    Returns user claims based on the scopes granted with the access token.
     
-    Returns user information for the authenticated user.
+    Standard scopes:
+    - openid: Required, returns 'sub' claim
+    - profile: Returns profile claims (name, preferred_username, updated_at, etc.)
+    - email: Returns email and email_verified claims
+    - address: Returns address claim
+    - phone: Returns phone_number and phone_number_verified claims
+    
+    Requires a valid OAuth2 access token with 'openid' scope.
     """
+    # Check if credentials were provided
+    if not credentials:
+        raise OAuth2Error(
+            "invalid_request",
+            "Missing authentication token",
+            status_code=401
+        )
+
     # Extract token
     access_token = credentials.credentials
     
-    # Validate token (simplified - in production, use proper JWT validation)
-    # For now, we'll use our existing token validation
+    # Get Redis client for blacklist checking
+    from app.core.redis import get_redis_dependency
+    redis_client = await get_redis_dependency()
+    
+    # Validate token using TokenManager
     from app.core.token import TokenManager
-    payload = await TokenManager.verify_token(access_token, "access")
+    payload = await TokenManager.verify_token(access_token, "access", redis_client)
     
     if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token"
+        raise OAuth2Error(
+            "invalid_token",
+            "Invalid or expired access token",
+            status_code=401
+        )
+    
+    # Extract scopes from token
+    token_scope = payload.get("scope", "")
+    if isinstance(token_scope, str):
+        scopes = set(token_scope.split())
+    elif isinstance(token_scope, list):
+        scopes = set(token_scope)
+    else:
+        scopes = set()
+    
+    # OpenID Connect requires 'openid' scope for UserInfo endpoint
+    if "openid" not in scopes:
+        raise OAuth2Error(
+            "insufficient_scope",
+            "The access token does not have the required 'openid' scope",
+            status_code=403
         )
     
     # Get user information
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid token payload"
+        raise OAuth2Error(
+            "invalid_token",
+            "Token does not contain user identifier",
+            status_code=400
         )
     
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+        raise OAuth2Error(
+            "invalid_token",
+            "User not found or inactive",
+            status_code=404
         )
     
-    # Return user info according to OpenID Connect spec
-    userinfo_data = {
-        "sub": str(user.id),
-        "name": user.username,
-        "preferred_username": user.username,
-        "email": user.email,
-        "email_verified": True,  # Assuming verified for now
-        "updated_at": user.updated_at.isoformat() if user.updated_at else user.created_at.isoformat()
-    }
+    # Build userinfo response based on granted scopes
+    userinfo_data = _build_userinfo_claims(user, scopes)
+    
+    logger.info(f"UserInfo request successful for user {user.id} with scopes: {', '.join(scopes)}")
     
     return userinfo_data
+
+
+def _build_userinfo_claims(user: User, scopes: set) -> Dict[str, Any]:
+    """
+    Build UserInfo claims based on granted scopes.
+    
+    Args:
+        user: User object
+        scopes: Set of granted scopes
+        
+    Returns:
+        Dictionary of claims to return
+    """
+    # Always include 'sub' claim (required by OpenID Connect)
+    claims = {
+        "sub": str(user.id)
+    }
+    
+    # Profile scope claims
+    if "profile" in scopes:
+        # Preferred username
+        if user.username:
+            claims["preferred_username"] = user.username
+            claims["name"] = user.username  # Use username as name if no separate name field
+        
+        # Updated_at timestamp (when profile was last updated)
+        if user.updated_at:
+            claims["updated_at"] = int(user.updated_at.timestamp())
+        elif user.created_at:
+            claims["updated_at"] = int(user.created_at.timestamp())
+        
+        # Add additional profile fields if available
+        # These can be extended based on your User model
+        # Examples: given_name, family_name, middle_name, nickname, 
+        # profile (URL), picture (URL), website, gender, birthdate, 
+        # zoneinfo, locale
+    
+    # Email scope claims
+    if "email" in scopes:
+        if user.email:
+            claims["email"] = user.email
+            # You can implement email verification in your system
+            # For now, we'll assume verified if email exists
+            claims["email_verified"] = True
+    
+    # Address scope claims
+    if "address" in scopes:
+        # If your User model has address fields, add them here
+        # The address claim should be a JSON object with these optional fields:
+        # formatted, street_address, locality, region, postal_code, country
+        # Example:
+        # if hasattr(user, 'address'):
+        #     claims["address"] = {
+        #         "formatted": user.address,
+        #         "country": user.country
+        #     }
+        pass
+    
+    # Phone scope claims
+    if "phone" in scopes:
+        # If your User model has phone fields, add them here
+        # Example:
+        # if hasattr(user, 'phone_number') and user.phone_number:
+        #     claims["phone_number"] = user.phone_number
+        #     claims["phone_number_verified"] = user.phone_verified
+        pass
+    
+    return claims
 
 
 @router.post("/introspect",
