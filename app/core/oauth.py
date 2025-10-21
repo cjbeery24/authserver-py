@@ -666,7 +666,8 @@ async def create_oauth2_token_response_with_id_token(
         access_token.access_token = token_response['access_token']
         db_session.add(access_token)
 
-    # Save refresh token
+    # Save refresh token only if it exists in the response
+    # (client_credentials grant does not include refresh tokens)
     if 'refresh_token' in token_response:
         refresh_token = OAuth2Token.create_refresh_token(
             client_id=client_pk,  # Use the integer primary key

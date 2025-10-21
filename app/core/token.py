@@ -483,17 +483,21 @@ class TokenManager:
         Returns:
             Token response dictionary
         """
-        # Create standard access and refresh tokens (roles will be included from user_data)
+        # Create access token
         access_token = TokenManager.create_access_token(user_data)
-        refresh_token = TokenManager.create_refresh_token(user_data)
 
         response = {
             "access_token": access_token,
-            "refresh_token": refresh_token,
             "token_type": "Bearer",
             "expires_in": settings.jwt_access_token_expire_minutes * 60,  # seconds
             "scope": " ".join(scopes) if scopes else ""
         }
+
+        # Only include refresh token if user_data is not empty (i.e., not client_credentials grant)
+        # Client credentials grant should NOT receive refresh tokens per RFC 6749
+        if user_data:
+            refresh_token = TokenManager.create_refresh_token(user_data)
+            response["refresh_token"] = refresh_token
 
         # Add ID token if openid scope is present
         if "openid" in scopes:
