@@ -317,17 +317,20 @@ async def authorize(
         raise OAuth2Error("unsupported_response_type", "Only 'code' response_type is supported")
 
     # Validate client
-    client = db.query(OAuth2Client).filter(
-        OAuth2Client.client_id == client_id,
-        OAuth2Client.is_active == True
-    ).first()
+    try:
+        client = db.query(OAuth2Client).filter(
+            OAuth2Client.client_id == client_id,
+            OAuth2Client.is_active == True
+        ).first()
 
-    if not client:
-        raise OAuth2Error("invalid_client", "Invalid client_id")
+        if not client:
+            raise OAuth2Error("invalid_client", "Invalid client_id")
 
-    # Validate redirect URI
-    if redirect_uri not in client.get_redirect_uris():
-        raise OAuth2Error("invalid_request", "Invalid redirect_uri")
+        # Validate redirect URI
+        if redirect_uri not in client.get_redirect_uris():
+            raise OAuth2Error("invalid_request", "Invalid redirect_uri")
+    except OAuth2Error as e:
+        return create_oauth2_error_response(e)
 
     # Additional security validation for redirect URI
     validate_redirect_uri_security(redirect_uri)
@@ -335,8 +338,8 @@ async def authorize(
     # Validate and normalize scopes
     try:
         validated_scope = validate_oauth2_scopes(scope, client.get_scopes())
-    except OAuth2Error:
-        raise
+    except OAuth2Error as e:
+        return create_oauth2_error_response(e)
 
     # Check if PKCE is required
     if settings.pkce_required and not code_challenge:
@@ -476,8 +479,8 @@ async def complete_authorization(
     # Validate CSRF token and get authorization request details
     try:
         auth_details = validate_authorization_csrf_token(csrf_token)
-    except OAuth2Error:
-        raise
+    except OAuth2Error as e:
+        return create_oauth2_error_response(e)
 
     # Validate user exists and is active
     user = db.query(User).filter(

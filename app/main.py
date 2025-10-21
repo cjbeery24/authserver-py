@@ -9,6 +9,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
+
+# Import OAuth2 error class for exception handling
+from app.api.v1.oauth import OAuth2Error
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from contextlib import asynccontextmanager
 import time
@@ -212,6 +215,13 @@ if settings.auth_middleware_enabled:
         db_getter=get_db,
     )
     logger.info("Authentication middleware enabled with injected dependencies")
+
+# OAuth2 exception handler
+@app.exception_handler(OAuth2Error)
+async def oauth2_exception_handler(request: Request, exc: OAuth2Error):
+    """Handle OAuth2 errors according to RFC 6749."""
+    from app.api.v1.oauth import create_oauth2_error_response
+    return create_oauth2_error_response(exc)
 
 # Global exception handler
 @app.exception_handler(Exception)
