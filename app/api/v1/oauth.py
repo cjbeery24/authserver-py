@@ -875,8 +875,8 @@ async def introspect_token(
     # Create authorization server for token introspection
     server = create_authorization_server(db)
 
-    # Introspect token
-    token_info = server.validator.introspect_token(token, token_type_hint, server.validator)
+    # Introspect token - pass the authenticated client
+    token_info = server.validator.introspect_token(token, token_type_hint, client)
 
     if not token_info:
         return TokenIntrospectionResponse(active=False)
