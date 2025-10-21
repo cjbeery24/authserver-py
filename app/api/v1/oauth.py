@@ -28,7 +28,7 @@ from app.core.oauth import (
 )
 from app.core.redis import get_redis_dependency
 from app.core.config import settings
-from app.core.crypto import RSAKeyManager
+from app.core.rbac import PermissionChecker
 from app.models.oauth2_client import OAuth2Client
 from app.models.oauth2_client_token import OAuth2ClientToken
 from app.models.user import User
@@ -38,8 +38,7 @@ from app.schemas.oauth import (
     OAuth2ClientRegistrationResponse,
     OAuth2ClientManagementResponse,
     OAuth2ClientListResponse,
-    TokenIntrospectionResponse,
-    JWKSResponse
+    TokenIntrospectionResponse
 )
 
 router = APIRouter()
@@ -49,6 +48,28 @@ logger = logging.getLogger(__name__)
 
 # Security scheme for token introspection and revocation
 token_scheme = HTTPBearer()
+
+
+async def _require_admin(current_user: User = Depends(get_current_user_or_401), db: Session = Depends(get_db)) -> User:
+    """
+    Dependency to require admin role.
+
+    Checks if the user has the 'admin' role or 'admin:access' permission.
+    """
+    # Check if user has admin role or admin:access permission
+    has_admin_role = await PermissionChecker.has_role(current_user.id, "admin", db)
+    has_admin_permission = await PermissionChecker.has_permission(current_user.id, "admin", "access", db)
+
+    if not (has_admin_role or has_admin_permission):
+        logger.warning(
+            f"Unauthorized OAuth client registration attempt by user {current_user.id} ({current_user.username})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: admin role or admin:access permission required"
+        )
+
+    return current_user
 
 
 class OAuth2Error(Exception):
@@ -186,6 +207,9 @@ def validate_oauth2_scopes(requested_scopes: str = None, client_scopes: list = N
 
 def handle_oauth2_exceptions(func):
     """Decorator for handling OAuth2-specific exceptions."""
+    from functools import wraps
+    
+    @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
@@ -258,79 +282,6 @@ def handle_oauth2_exceptions(func):
 
     return wrapper
 
-
-@router.get("/.well-known/openid_configuration", response_model=Dict[str, Any])
-async def openid_configuration():
-    """
-    OpenID Connect Discovery endpoint.
-    
-    Returns the OpenID Connect provider configuration.
-    """
-    return {
-        "issuer": settings.oidc_issuer_url,
-        "authorization_endpoint": settings.oidc_authorization_endpoint,
-        "token_endpoint": settings.oidc_token_endpoint,
-        "userinfo_endpoint": settings.oidc_userinfo_endpoint,
-        "introspection_endpoint": settings.oidc_introspection_endpoint,
-        "revocation_endpoint": settings.oidc_revocation_endpoint,
-        "jwks_uri": settings.oidc_jwks_uri,
-        "response_types_supported": ["code"],
-        "grant_types_supported": [
-            "authorization_code",
-            "refresh_token",
-            "client_credentials",
-            "password"
-        ],
-        "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["RS256", "HS256"],  # RS256 preferred, HS256 for backward compatibility
-        "token_endpoint_auth_methods_supported": [
-            "client_secret_basic",
-            "client_secret_post"
-        ],
-        "scopes_supported": settings.oauth2_supported_scopes,
-        "code_challenge_methods_supported": ["S256", "plain"] if settings.pkce_required else [],
-        "claims_supported": [
-            "sub",
-            "iss",
-            "aud",
-            "exp",
-            "iat",
-            "auth_time",
-            "nonce",
-            "name",
-            "given_name",
-            "family_name",
-            "email",
-            "email_verified",
-            "username"
-        ]
-    }
-
-
-@router.get("/.well-known/jwks.json", response_model=JWKSResponse)
-async def get_jwks():
-    """
-    JSON Web Key Set (JWKS) endpoint.
-    
-    Provides public keys for JWT signature verification.
-    This allows consuming applications to verify JWT tokens
-    without sharing secret keys.
-    """
-    try:
-        jwks_data = RSAKeyManager.get_jwks()
-        return JWKSResponse(**jwks_data)
-    except ValueError as e:
-        logger.error(f"JWKS generation failed: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWKS unavailable - server configuration error"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error generating JWKS: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="JWKS unavailable"
-        )
 
 
 @router.get("/authorize", response_class=RedirectResponse)
@@ -673,7 +624,7 @@ async def _handle_authorization_code_grant(
     validated_scope = validate_oauth2_scopes(auth_code.scope, client.get_scopes())
 
     # Generate tokens with nonce support for ID tokens
-    tokens = server.create_token_response(
+    tokens = await server.create_token_response(
         client_id=client_id,
         grant_type="authorization_code",
         user_id=auth_code.user_id,
@@ -726,7 +677,7 @@ async def _handle_refresh_token_grant(
         validated_scope = validate_oauth2_scopes(requested_scope, client.get_scopes())
 
     # Generate new tokens
-    tokens = server.create_token_response(
+    tokens = await server.create_token_response(
         client_id=client_id,
         grant_type="refresh_token",
         user_id=token_info.get('user').id if token_info.get('user') else None,
@@ -755,7 +706,7 @@ async def _handle_client_credentials_grant(
     validated_scope = validate_oauth2_scopes(scope, client.get_scopes())
 
     # Generate tokens (no user associated with client credentials)
-    tokens = server.create_token_response(
+    tokens = await server.create_token_response(
         client_id=client_id,
         grant_type="client_credentials",
         user_id=None,
@@ -789,7 +740,7 @@ async def _handle_password_grant(
     validated_scope = validate_oauth2_scopes(scope, client.get_scopes())
 
     # Generate tokens
-    tokens = server.create_token_response(
+    tokens = await server.create_token_response(
         client_id=client_id,
         grant_type="password",
         user_id=user.id,
@@ -833,7 +784,7 @@ async def userinfo(
     # Validate token (simplified - in production, use proper JWT validation)
     # For now, we'll use our existing token validation
     from app.core.token import TokenManager
-    payload = TokenManager.verify_token(access_token, "access")
+    payload = await TokenManager.verify_token(access_token, "access")
     
     if not payload:
         raise HTTPException(
@@ -874,38 +825,44 @@ async def userinfo(
             response_model=TokenIntrospectionResponse)
 @handle_oauth2_exceptions
 async def introspect_token(
+    request: Request,
     token: str = Form(...),
     token_type_hint: str = Form(None),
-    credentials: HTTPAuthorizationCredentials = Depends(token_scheme),
     db: Session = Depends(get_db)
 ):
     """
     OAuth 2.0 Token Introspection endpoint.
     
     Returns information about the provided token.
+    Requires client authentication via Authorization header (Bearer or Basic).
     """
-    # For introspection, we need to validate the client making the request
-    # The token in the Authorization header should be a client access token
-    # For simplicity, we'll use basic auth with client credentials
-    
     # Extract client credentials from Authorization header
-    # This is a simplified implementation - in production, use proper client authentication
+    auth_header = request.headers.get("Authorization", "")
+    
+    if not auth_header:
+        raise OAuth2Error("invalid_client", "Missing Authorization header", status_code=401)
+    
     try:
         import base64
-        auth_header = credentials.credentials
-        decoded = base64.b64decode(auth_header).decode('utf-8')
+        # Support both "Bearer <base64>" and "Basic <base64>" formats
+        if auth_header.startswith("Bearer ") or auth_header.startswith("Basic "):
+            encoded_creds = auth_header.split(" ", 1)[1]
+        else:
+            raise OAuth2Error("invalid_client", "Invalid Authorization header format", status_code=401)
+            
+        decoded = base64.b64decode(encoded_creds).decode('utf-8')
         client_id, client_secret = decoded.split(':', 1)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to parse client credentials: {str(e)}")
         raise OAuth2Error("invalid_client", "Invalid client credentials", status_code=401)
 
-    # Find client
+    # Find and verify client
     client = db.query(OAuth2Client).filter(
         OAuth2Client.client_id == client_id,
-        OAuth2Client.client_secret == client_secret,
         OAuth2Client.is_active == True
     ).first()
 
-    if not client:
+    if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
     # Create authorization server for token introspection
@@ -924,33 +881,44 @@ async def introspect_token(
             dependencies=[Depends(RateLimiter(times=30, minutes=1))])
 @handle_oauth2_exceptions
 async def revoke_token(
+    request: Request,
     token: str = Form(...),
     token_type_hint: str = Form(None),
-    credentials: HTTPAuthorizationCredentials = Depends(token_scheme),
     db: Session = Depends(get_db)
 ):
     """
     OAuth 2.0 Token Revocation endpoint.
     
     Revokes the provided token.
+    Requires client authentication via Authorization header (Bearer or Basic).
     """
     # Extract client credentials from Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    
+    if not auth_header:
+        raise OAuth2Error("invalid_client", "Missing Authorization header", status_code=401)
+    
     try:
         import base64
-        auth_header = credentials.credentials
-        decoded = base64.b64decode(auth_header).decode('utf-8')
+        # Support both "Bearer <base64>" and "Basic <base64>" formats
+        if auth_header.startswith("Bearer ") or auth_header.startswith("Basic "):
+            encoded_creds = auth_header.split(" ", 1)[1]
+        else:
+            raise OAuth2Error("invalid_client", "Invalid Authorization header format", status_code=401)
+            
+        decoded = base64.b64decode(encoded_creds).decode('utf-8')
         client_id, client_secret = decoded.split(':', 1)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to parse client credentials: {str(e)}")
         raise OAuth2Error("invalid_client", "Invalid client credentials", status_code=401)
 
-    # Find client
+    # Find and verify client
     client = db.query(OAuth2Client).filter(
         OAuth2Client.client_id == client_id,
-        OAuth2Client.client_secret == client_secret,
         OAuth2Client.is_active == True
     ).first()
 
-    if not client:
+    if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
     # Create authorization server for token revocation
@@ -993,16 +961,17 @@ async def cleanup_expired_tokens(
     }
 
 
-@router.post("/clients", 
+@router.post("/clients",
             response_model=OAuth2ClientRegistrationResponse,
+            status_code=201,
             dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def register_client(
     client_data: OAuth2ClientRegistrationRequest,
-    current_user: User = Depends(get_current_user_or_401),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
-    OAuth 2.0 Dynamic Client Registration endpoint.
+    OAuth 2.0 Client Registration endpoint.
     
     Registers a new OAuth 2.0 client.
     """
