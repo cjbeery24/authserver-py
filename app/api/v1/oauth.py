@@ -940,7 +940,7 @@ async def revoke_token(
 @router.post("/admin/cleanup-tokens", dependencies=[Depends(RateLimiter(times=10, hours=1))])
 async def cleanup_expired_tokens(
     days_old: int = 30,
-    current_user: User = Depends(get_current_user_or_401),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -1018,7 +1018,7 @@ async def register_client(
 
 @router.get("/clients", response_model=OAuth2ClientListResponse)
 async def list_clients(
-    current_user: User = Depends(get_current_user_or_401),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
@@ -1079,17 +1079,23 @@ async def get_client_from_registration_token(
 @router.get("/clients/{client_id}", response_model=OAuth2ClientManagementResponse)
 async def get_client(
     client_id: str,
-    client: OAuth2Client = Depends(get_client_from_registration_token),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Get OAuth 2.0 client information using registration access token.
+    Get OAuth 2.0 client information.
+    Requires admin privileges.
     """
-    # Verify the client_id matches the token's client
-    if client.client_id != client_id:
+    # Get the client by client_id
+    client = db.query(OAuth2Client).filter(
+        OAuth2Client.client_id == client_id,
+        OAuth2Client.is_active == True
+    ).first()
+
+    if not client:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this client"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found"
         )
 
     return OAuth2ClientManagementResponse(
@@ -1109,17 +1115,23 @@ async def get_client(
 async def update_client(
     client_id: str,
     client_data: OAuth2ClientRegistrationRequest,
-    client: OAuth2Client = Depends(get_client_from_registration_token),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Update OAuth 2.0 client using registration access token.
+    Update OAuth 2.0 client.
+    Requires admin privileges.
     """
-    # Verify the client_id matches the token's client
-    if client.client_id != client_id:
+    # Get the client by client_id
+    client = db.query(OAuth2Client).filter(
+        OAuth2Client.client_id == client_id,
+        OAuth2Client.is_active == True
+    ).first()
+
+    if not client:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this client"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found"
         )
 
     # Update client fields
@@ -1164,17 +1176,23 @@ async def update_client(
               dependencies=[Depends(RateLimiter(times=5, hours=1))])
 async def delete_client(
     client_id: str,
-    client: OAuth2Client = Depends(get_client_from_registration_token),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Delete OAuth 2.0 client using registration access token.
+    Delete OAuth 2.0 client.
+    Requires admin privileges.
     """
-    # Verify the client_id matches the token's client
-    if client.client_id != client_id:
+    # Get the client by client_id
+    client = db.query(OAuth2Client).filter(
+        OAuth2Client.client_id == client_id,
+        OAuth2Client.is_active == True
+    ).first()
+
+    if not client:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this client"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found"
         )
 
     # Mark client as inactive instead of deleting (for audit purposes)
@@ -1199,20 +1217,26 @@ async def delete_client(
 @handle_oauth2_exceptions
 async def rotate_client_secret(
     client_id: str,
-    client: OAuth2Client = Depends(get_client_from_registration_token),
+    current_user: User = Depends(_require_admin),
     db: Session = Depends(get_db)
 ):
     """
     Rotate the client secret for an OAuth 2.0 client.
+    Requires admin privileges.
 
     This generates a new client secret and returns it once.
     The old secret becomes invalid immediately.
     """
-    # Verify the client_id matches the token's client
-    if client.client_id != client_id:
+    # Get the client by client_id
+    client = db.query(OAuth2Client).filter(
+        OAuth2Client.client_id == client_id,
+        OAuth2Client.is_active == True
+    ).first()
+
+    if not client:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this client"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client not found"
         )
 
     # Generate new secret

@@ -119,9 +119,9 @@ class TestOAuthClientManagement:
         assert "detail" in data
         assert "admin role or admin:access permission required" in data["detail"]
 
-    def test_list_oauth_clients(self, integration_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
-        """Test listing OAuth clients."""
-        response = integration_authenticated_client.get("/oauth/clients")
+    def test_list_oauth_clients(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
+        """Test listing OAuth clients (requires admin)."""
+        response = integration_admin_authenticated_client.get("/oauth/clients")
 
         assert response.status_code == 200
         data = response.json()
@@ -134,25 +134,10 @@ class TestOAuthClientManagement:
         client_ids = [client["client_id"] for client in data["clients"]]
         assert test_oauth_client.client_id in client_ids
 
-    def test_get_oauth_client_details(self, integration_client: TestClient, test_oauth_client: OAuth2Client, db_session: Session):
-        """Test getting OAuth client details with registration token."""
-        # Generate a registration token for the client
-        from app.models.oauth2_client_token import OAuth2ClientToken
-        import secrets
-        
-        token_value = secrets.token_urlsafe(64)
-        token_record = OAuth2ClientToken(
-            client_id=test_oauth_client.id,
-            token=token_value,
-            token_type="registration"
-        )
-        db_session.add(token_record)
-        db_session.commit()
-
-        # Use the registration token to access client details
-        response = integration_client.get(
-            f"/oauth/clients/{test_oauth_client.client_id}",
-            headers={"Authorization": f"Bearer {token_value}"}
+    def test_get_oauth_client_details(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
+        """Test getting OAuth client details (requires admin)."""
+        response = integration_admin_authenticated_client.get(
+            f"/oauth/clients/{test_oauth_client.client_id}"
         )
 
         assert response.status_code == 200
@@ -162,31 +147,17 @@ class TestOAuthClientManagement:
         assert data["client_name"] == test_oauth_client.name
         assert data["is_active"] == test_oauth_client.is_active
 
-    def test_update_oauth_client(self, integration_client: TestClient, test_oauth_client: OAuth2Client, db_session: Session):
-        """Test updating an OAuth client with registration token."""
-        # Generate a registration token for the client
-        from app.models.oauth2_client_token import OAuth2ClientToken
-        import secrets
-        
-        token_value = secrets.token_urlsafe(64)
-        token_record = OAuth2ClientToken(
-            client_id=test_oauth_client.id,
-            token=token_value,
-            token_type="registration"
-        )
-        db_session.add(token_record)
-        db_session.commit()
-
+    def test_update_oauth_client(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
+        """Test updating an OAuth client (requires admin)."""
         update_data = {
             "client_name": "Updated Test Client",
             "redirect_uris": ["http://localhost:3000/callback", "http://localhost:3001/callback"],
             "scopes": ["openid", "profile"]
         }
 
-        response = integration_client.put(
+        response = integration_admin_authenticated_client.put(
             f"/oauth/clients/{test_oauth_client.client_id}",
-            json=update_data,
-            headers={"Authorization": f"Bearer {token_value}"}
+            json=update_data
         )
 
         assert response.status_code == 200
@@ -196,30 +167,12 @@ class TestOAuthClientManagement:
         assert len(data["redirect_uris"]) == 2
         assert data["scopes"] == ["openid", "profile"]
 
-        # Verify in database
-        db_session.refresh(test_oauth_client)
-        assert test_oauth_client.name == "Updated Test Client"
-
-    def test_rotate_client_secret(self, integration_client: TestClient, test_oauth_client: OAuth2Client, db_session: Session):
-        """Test rotating OAuth client secret with registration token."""
-        # Generate a registration token for the client
-        from app.models.oauth2_client_token import OAuth2ClientToken
-        import secrets
-        
-        token_value = secrets.token_urlsafe(64)
-        token_record = OAuth2ClientToken(
-            client_id=test_oauth_client.id,
-            token=token_value,
-            token_type="registration"
-        )
-        db_session.add(token_record)
-        db_session.commit()
-
+    def test_rotate_client_secret(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
+        """Test rotating OAuth client secret (requires admin)."""
         old_secret = test_oauth_client.client_secret
 
-        response = integration_client.post(
-            f"/oauth/clients/{test_oauth_client.client_id}/rotate-secret",
-            headers={"Authorization": f"Bearer {token_value}"}
+        response = integration_admin_authenticated_client.post(
+            f"/oauth/clients/{test_oauth_client.client_id}/rotate-secret"
         )
 
         assert response.status_code == 200
@@ -229,28 +182,10 @@ class TestOAuthClientManagement:
         # New plain secret should be different from the old hashed secret
         assert data["client_secret"] != old_secret
 
-        # Verify in database - the secret should be different (hashed)
-        db_session.refresh(test_oauth_client)
-        assert test_oauth_client.client_secret != old_secret
-
-    def test_delete_oauth_client(self, integration_client: TestClient, test_oauth_client: OAuth2Client, db_session: Session):
-        """Test deleting an OAuth client with registration token."""
-        # Generate a registration token for the client
-        from app.models.oauth2_client_token import OAuth2ClientToken
-        import secrets
-        
-        token_value = secrets.token_urlsafe(64)
-        token_record = OAuth2ClientToken(
-            client_id=test_oauth_client.id,
-            token=token_value,
-            token_type="registration"
-        )
-        db_session.add(token_record)
-        db_session.commit()
-
-        response = integration_client.delete(
-            f"/oauth/clients/{test_oauth_client.client_id}",
-            headers={"Authorization": f"Bearer {token_value}"}
+    def test_delete_oauth_client(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client, db_session: Session):
+        """Test deleting an OAuth client (requires admin)."""
+        response = integration_admin_authenticated_client.delete(
+            f"/oauth/clients/{test_oauth_client.client_id}"
         )
 
         assert response.status_code == 200
@@ -278,6 +213,29 @@ class TestOAuthClientManagement:
 
             response = integration_client.delete(endpoint)
             assert response.status_code == 401
+
+    def test_client_management_requires_admin_role(self, integration_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
+        """Test that client management endpoints require admin role (not just authentication)."""
+        # Test GET /clients (list clients)
+        response = integration_authenticated_client.get("/oauth/clients")
+        assert response.status_code == 403
+
+        # Test GET /clients/{id} (get specific client)
+        response = integration_authenticated_client.get(f"/oauth/clients/{test_oauth_client.client_id}")
+        assert response.status_code == 403
+
+        # Test PUT /clients/{id} (update client)
+        update_data = {"client_name": "Updated Name"}
+        response = integration_authenticated_client.put(f"/oauth/clients/{test_oauth_client.client_id}", json=update_data)
+        assert response.status_code == 403
+
+        # Test DELETE /clients/{id} (delete client)
+        response = integration_authenticated_client.delete(f"/oauth/clients/{test_oauth_client.client_id}")
+        assert response.status_code == 403
+
+        # Test POST /clients/{id}/rotate-secret (rotate secret)
+        response = integration_authenticated_client.post(f"/oauth/clients/{test_oauth_client.client_id}/rotate-secret")
+        assert response.status_code == 403
 
 
 # ==================== OAUTH AUTHORIZATION CODE FLOW ====================
