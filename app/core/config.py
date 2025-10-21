@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     
     # OAuth 2.0 Scopes
     oauth2_default_scopes: List[str] = Field(default=["openid", "profile", "email"], env="OAUTH2_DEFAULT_SCOPES")
-    oauth2_supported_scopes: List[str] = Field(default=["openid", "profile", "email", "offline_access"], env="OAUTH2_SUPPORTED_SCOPES")
+    oauth2_supported_scopes: List[str] = Field(default=["openid", "profile", "email", "offline_access", "read", "write"], env="OAUTH2_SUPPORTED_SCOPES")
     
     # Rate Limiting
     rate_limit_enabled: bool = Field(default=True, env="RATE_LIMIT_ENABLED")

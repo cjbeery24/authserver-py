@@ -1,6 +1,6 @@
 # Authentication Server - Development Makefile
 
-.PHONY: help install dev test test-unit test-integration test-docker clean lint format security-check docker-build docker-up docker-down migrate
+.PHONY: help install dev test test-unit test-integration test-docker clean lint format security-check docker-build docker-up docker-down migrate migrate-fresh migrate-test seed setup-db
 
 # Default target
 help:
@@ -34,7 +34,10 @@ help:
 	@echo ""
 	@echo "🗄️  Database:"
 	@echo "  make migrate          Run database migrations"
+	@echo "  make migrate-fresh    Run fresh database migrations (drops all tables first)"
 	@echo "  make migrate-test     Run migrations on test database"
+	@echo "  make seed             Run database seeder to create initial data"
+	@echo "  make setup-db         Run fresh migrations and seed data (complete setup)"
 	@echo ""
 	@echo "🔍 Code Quality:"
 	@echo "  make lint             Run linting checks"
@@ -211,9 +214,20 @@ migrate:
 	@echo "🗄️  Running database migrations..."
 	poetry run alembic upgrade head
 
+migrate-fresh:
+	@echo "🗄️  Running fresh database migrations (drops all tables first)..."
+	poetry run python scripts/migrate_fresh.py
+
 migrate-test:
 	@echo "🗄️  Running migrations on test database..."
 	DATABASE_URL="postgresql://testuser:testpass@localhost:5433/authserver_test" poetry run alembic upgrade head
+
+seed:
+	@echo "🌱 Running database seeder..."
+	poetry run python scripts/seed_db.py
+
+setup-db: migrate-fresh seed
+	@echo "✅ Database setup complete with fresh migrations and seed data"
 
 # Code quality
 lint:

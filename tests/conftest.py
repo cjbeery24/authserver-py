@@ -221,21 +221,9 @@ def client(override_get_db, override_get_redis, db_session, mock_redis):
     test_app.add_middleware(SecurityHeadersMiddleware)
 
     # Include routers (same as main app)
-    from app.api.v1.health import router as health_router
-    from app.api.v1.auth import router as auth_router
-    from app.api.v1.oauth import router as oauth_router
-    from app.api.v1.security import router as security_router
-    from app.api.v1.mfa import router as mfa_router
-    from app.api.v1.users import router as users_router
-    from app.api.v1.admin import router as admin_router
+    from app.routers import include_routers
 
-    test_app.include_router(health_router, prefix="/api/v1", tags=["health"])
-    test_app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
-    test_app.include_router(oauth_router, prefix="/oauth", tags=["oauth"])
-    test_app.include_router(security_router, prefix="/api/v1/security", tags=["security"])
-    test_app.include_router(mfa_router, prefix="/api/v1/mfa", tags=["mfa"])
-    test_app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
-    test_app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
+    include_routers(test_app)
 
     # Override dependencies
     test_app.dependency_overrides[get_db] = override_get_db
@@ -295,21 +283,9 @@ def integration_client(override_get_db, db_session, clear_redis_cache):
     test_app.add_middleware(SecurityHeadersMiddleware)
 
     # Include routers (same as main app)
-    from app.api.v1.health import router as health_router
-    from app.api.v1.auth import router as auth_router
-    from app.api.v1.oauth import router as oauth_router
-    from app.api.v1.security import router as security_router
-    from app.api.v1.mfa import router as mfa_router
-    from app.api.v1.users import router as users_router
-    from app.api.v1.admin import router as admin_router
+    from app.routers import include_routers
 
-    test_app.include_router(health_router, prefix="/api/v1", tags=["health"])
-    test_app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
-    test_app.include_router(oauth_router, prefix="/oauth", tags=["oauth"])
-    test_app.include_router(security_router, prefix="/api/v1/security", tags=["security"])
-    test_app.include_router(mfa_router, prefix="/api/v1/mfa", tags=["mfa"])
-    test_app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
-    test_app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
+    include_routers(test_app)
 
     # Override dependencies
     test_app.dependency_overrides[get_db] = override_get_db

@@ -33,12 +33,13 @@ EXCLUDED_AUTH_PATHS = [
     "/api/v1/auth/token/mfa",
     "/api/v1/auth/password-reset/request",
     "/api/v1/auth/password-reset/confirm",
+    "/.well-known/jwks.json",
+    "/.well-known/openid-configuration",
     "/oauth/token",
-    "/oauth/.well-known/openid-configuration",
-    "/oauth/.well-known/jwks.json",
     "/oauth/authorize",  # OAuth authorization endpoint
     "/oauth/introspect",  # Token introspection
     "/oauth/revoke",  # Token revocation
+    "/oauth/userinfo",  # OpenID Connect UserInfo endpoint
 ]
 
 

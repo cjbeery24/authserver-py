@@ -62,7 +62,9 @@ class OAuth2Client(BaseModel, TimestampMixin):
     def set_redirect_uris(self, uris):
         """Set redirect URIs as JSON string."""
         import json
-        self.redirect_uris = json.dumps(uris) if uris else "[]"
+        # Convert HttpUrl objects to strings
+        serialized_uris = [str(uri) for uri in uris] if uris else []
+        self.redirect_uris = json.dumps(serialized_uris)
 
     def set_scopes(self, scope_list):
         """Set scopes as JSON string."""

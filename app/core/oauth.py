@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Any
 from urllib.parse import urlencode, parse_qs, urlparse
 
-from authlib.oauth2 import AuthorizationServer
+from authlib.oauth2 import AuthorizationServer as BaseAuthorizationServer
 from authlib.oauth2.rfc6749 import grants, ClientMixin
 from authlib.oauth2.rfc6749.errors import InvalidClientError, InvalidRequestError, InvalidScopeError
 from authlib.oauth2.rfc6749.models import AuthorizationCodeMixin
@@ -539,27 +539,31 @@ class PasswordGrant(grants.ResourceOwnerPasswordCredentialsGrant):
         return self.server.validate_user(username, password, client, self.request)
 
 
+class CustomAuthorizationServer(BaseAuthorizationServer):
+    """Custom AuthorizationServer with integrated validator."""
+    
+    def __init__(self, validator):
+        super().__init__()
+        self.validator = validator
+        self.db_session = validator.db_session
+
+    def query_client(self, client_id):
+        """Query client using the validator."""
+        return self.validator.authenticate_client_id(client_id)
+
+    def save_token(self, token, request):
+        """Save token using the validator."""
+        self.validator.save_token(token, request)
+
+
 def create_authorization_server(db_session):
     """Create and configure authorization server."""
     
     # Create validator
     validator = CustomOAuth2RequestValidator(db_session)
     
-    # Create query_client function for Authlib
-    def query_client(client_id):
-        """Query client by ID."""
-        return validator.authenticate_client_id(client_id)
-    
-    # Create save_token function for Authlib
-    def save_token(token, request):
-        """Save token to database."""
-        validator.save_token(token, request)
-    
-    # Create authorization server using Authlib's core AuthorizationServer
-    server = AuthorizationServer(
-        query_client=query_client,
-        save_token=save_token
-    )
+    # Create custom authorization server
+    server = CustomAuthorizationServer(validator)
     
     # Add grants
     server.register_grant(AuthorizationCodeGrant)
@@ -596,7 +600,7 @@ async def create_oauth2_token_response_with_id_token(
     
     Args:
         db_session: Database session
-        client_id: OAuth2 client ID
+        client_id: OAuth2 client ID (the string client_id field, not the integer ID)
         grant_type: Grant type being used
         user_id: User ID (None for client credentials)
         scope: Granted scopes as space-separated string
@@ -608,6 +612,14 @@ async def create_oauth2_token_response_with_id_token(
     """
     from app.core.token import TokenManager
     from app.models.user import User
+    from app.models.oauth2_client import OAuth2Client
+    
+    # Look up the client to get its integer ID
+    client = db_session.query(OAuth2Client).filter(OAuth2Client.client_id == client_id).first()
+    if not client:
+        raise ValueError(f"Client not found: {client_id}")
+    
+    client_pk = client.id  # The integer primary key
     
     # Parse scopes
     scopes = scope.split() if scope else []
@@ -646,7 +658,7 @@ async def create_oauth2_token_response_with_id_token(
     # Save access token
     if 'access_token' in token_response:
         access_token = OAuth2Token.create_access_token(
-            client_id=client_id,
+            client_id=client_pk,  # Use the integer primary key
             user_id=user_id,
             scopes=scopes,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.oauth2_access_token_expire_minutes)
@@ -657,7 +669,7 @@ async def create_oauth2_token_response_with_id_token(
     # Save refresh token
     if 'refresh_token' in token_response:
         refresh_token = OAuth2Token.create_refresh_token(
-            client_id=client_id,
+            client_id=client_pk,  # Use the integer primary key
             user_id=user_id,
             scopes=scopes,
             expires_at=datetime.now(timezone.utc) + timedelta(days=settings.oauth2_refresh_token_expire_days)
