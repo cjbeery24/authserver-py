@@ -931,8 +931,8 @@ async def revoke_token(
     # Create authorization server for token revocation
     server = create_authorization_server(db)
 
-    # Revoke token
-    success = server.validator.revoke_token(token, token_type_hint, server.validator)
+    # Revoke token - pass the authenticated client
+    success = server.validator.revoke_token(token, token_type_hint, client)
 
     if success:
         logger.info(f"Successfully revoked token for client {client_id} (type_hint: {token_type_hint})")

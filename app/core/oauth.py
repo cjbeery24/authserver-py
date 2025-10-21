@@ -331,7 +331,7 @@ class CustomOAuth2RequestValidator:
         """Revoke token."""
         # Find token in database
         query = self.db_session.query(OAuth2Token).filter(
-            OAuth2Client.client_id == client.client_id
+            OAuth2Token.client_id == client.id
         )
 
         if token_type_hint == 'access_token':
