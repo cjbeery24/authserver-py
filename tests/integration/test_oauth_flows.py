@@ -184,15 +184,20 @@ class TestOAuthClientManagement:
 
     def test_delete_oauth_client(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client, db_session: Session):
         """Test deleting an OAuth client (requires admin)."""
+        client_id = test_oauth_client.client_id  # Store before object becomes detached
         response = integration_admin_authenticated_client.delete(
-            f"/oauth/clients/{test_oauth_client.client_id}"
+            f"/oauth/clients/{client_id}"
         )
 
         assert response.status_code == 200
 
         # Verify client is deactivated (not deleted)
-        db_session.refresh(test_oauth_client)
-        assert test_oauth_client.is_active is False
+        from app.models.oauth2_client import OAuth2Client
+        deleted_client = db_session.query(OAuth2Client).filter(
+            OAuth2Client.client_id == client_id
+        ).first()
+        assert deleted_client is not None
+        assert deleted_client.is_active is False
 
     def test_access_client_management_without_auth(self, integration_client: TestClient):
         """Test that client management endpoints require authentication."""
@@ -267,7 +272,7 @@ class TestOAuthAuthorizationCodeFlow:
         response = integration_client.get(auth_url, follow_redirects=False)
 
         # Should redirect to login page or consent page
-        assert response.status_code in [302, 200]
+        assert response.status_code in [200, 307]
 
         # For this test, we'll simulate the flow by directly calling the complete endpoint
         # In a real scenario, the user would authenticate and consent

@@ -320,7 +320,7 @@ def authenticated_client(client, test_user, db_session):
 
 
 @pytest.fixture(scope="function")
-def integration_authenticated_client(integration_client, test_user, db_session):
+def integration_authenticated_client(integration_client, test_user, db_session, rsa_keys):
     """Create an integration test client with an authenticated regular user."""
     from app.core.token import TokenManager
 
@@ -366,7 +366,7 @@ def admin_authenticated_client(client, admin_user, db_session):
 
 
 @pytest.fixture(scope="function")
-def integration_admin_authenticated_client(integration_client, admin_user, db_session):
+def integration_admin_authenticated_client(integration_client, admin_user, db_session, rsa_keys):
     """Create an integration test client with an authenticated admin user."""
     from app.core.token import TokenManager
 
@@ -575,6 +575,46 @@ def mock_email_service():
     mock.send_password_changed_notification.return_value = True
 
     return mock
+
+
+# ==================== RSA KEY FIXTURE ====================
+
+@pytest.fixture(scope="session")
+def rsa_keys():
+    """Generate RSA keys for JWT testing."""
+    from app.core.crypto import RSAKeyManager
+    from app.core.config import Settings
+    import os
+    import importlib
+
+    # Generate RSA key pair for testing
+    private_key_pem, public_key_pem = RSAKeyManager.generate_rsa_key_pair(key_size=2048)
+
+    # Set environment variables
+    os.environ['JWT_PRIVATE_KEY'] = private_key_pem
+    os.environ['JWT_PUBLIC_KEY'] = public_key_pem
+    os.environ['JWT_ALGORITHM'] = 'RS256'
+    os.environ['JWT_KEY_ID'] = 'test-key-1'
+
+    # Force reload the settings by updating the singleton directly
+    from app.core.config import settings
+    # Update the settings object with new values
+    settings.jwt_private_key = private_key_pem
+    settings.jwt_public_key = public_key_pem
+    settings.jwt_algorithm = 'RS256'
+    settings.jwt_key_id = 'test-key-1'
+
+    yield private_key_pem, public_key_pem
+
+    # Clean up
+    if 'JWT_PRIVATE_KEY' in os.environ:
+        del os.environ['JWT_PRIVATE_KEY']
+    if 'JWT_PUBLIC_KEY' in os.environ:
+        del os.environ['JWT_PUBLIC_KEY']
+    if 'JWT_ALGORITHM' in os.environ:
+        del os.environ['JWT_ALGORITHM']
+    if 'JWT_KEY_ID' in os.environ:
+        del os.environ['JWT_KEY_ID']
 
 
 # ==================== EVENT LOOP FIXTURE ====================

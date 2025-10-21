@@ -420,7 +420,9 @@ def generate_authorization_csrf_token(
         payload["nonce"] = nonce
 
     # Sign the token
-    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    from app.core.crypto import RSAKeyManager
+    signing_key = RSAKeyManager.get_signing_key()
+    token = jwt.encode(payload, signing_key, algorithm=settings.jwt_algorithm)
     return token
 
 
@@ -432,9 +434,11 @@ def validate_authorization_csrf_token(csrf_token: str) -> dict:
     """
     try:
         # Decode and verify token
+        from app.core.crypto import RSAKeyManager
+        verification_key = RSAKeyManager.get_verification_key()
         payload = jwt.decode(
             csrf_token,
-            settings.jwt_secret_key,
+            verification_key,
             algorithms=[settings.jwt_algorithm]
         )
 
