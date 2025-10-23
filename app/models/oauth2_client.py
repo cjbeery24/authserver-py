@@ -29,6 +29,7 @@ class OAuth2Client(BaseModel, TimestampMixin):
     name = Column(String(255), nullable=False)
     redirect_uris = Column(Text, nullable=False)  # JSON string of redirect URIs
     scopes = Column(Text, nullable=False)  # JSON string of allowed scopes
+    grant_types = Column(Text, nullable=False)  # JSON string of allowed grant types
     is_active = Column(Boolean, default=True, nullable=False, index=True)
     secret_last_rotated = Column(DateTime(timezone=True), nullable=True)  # Track when secret was last rotated
 
@@ -71,6 +72,23 @@ class OAuth2Client(BaseModel, TimestampMixin):
         import json
         self.scopes = json.dumps(scope_list) if scope_list else "[]"
 
+    def get_grant_types(self):
+        """Get list of grant types from JSON string."""
+        import json
+        try:
+            return json.loads(self.grant_types)
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    def set_grant_types(self, grant_type_list):
+        """Set grant types as JSON string."""
+        import json
+        self.grant_types = json.dumps(grant_type_list) if grant_type_list else "[]"
+
+    def is_grant_type_allowed(self, grant_type: str) -> bool:
+        """Check if a grant type is allowed for this client."""
+        return grant_type in self.get_grant_types()
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Store plain secret temporarily if provided (for registration response)
@@ -79,6 +97,9 @@ class OAuth2Client(BaseModel, TimestampMixin):
         if 'secret_last_rotated' not in kwargs and hasattr(self, 'created_at'):
             from datetime import datetime, timezone
             self.secret_last_rotated = datetime.now(timezone.utc)
+        # Set default grant types if not provided
+        if 'grant_types' not in kwargs:
+            self.grant_types = '["authorization_code", "refresh_token"]'
 
     def set_client_secret(self, plain_secret: str):
         """Set and hash a new client secret."""

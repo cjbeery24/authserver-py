@@ -101,6 +101,7 @@ class TestOAuthClientManagement:
         assert data["client_name"] == "Test Client"
         assert data["redirect_uris"] == ["http://localhost:3000/callback"]
         assert data["scopes"] == ["openid", "profile", "email"]
+        assert data["grant_types"] == ["authorization_code", "refresh_token"]
         assert "registration_access_token" in data
 
     def test_create_oauth_client_requires_admin(self, integration_authenticated_client: TestClient, test_user: User):
@@ -146,6 +147,7 @@ class TestOAuthClientManagement:
         assert data["client_id"] == test_oauth_client.client_id
         assert data["client_name"] == test_oauth_client.name
         assert data["is_active"] == test_oauth_client.is_active
+        assert set(data["grant_types"]) == {"authorization_code", "refresh_token", "client_credentials", "password"}
 
     def test_update_oauth_client(self, integration_admin_authenticated_client: TestClient, test_oauth_client: OAuth2Client):
         """Test updating an OAuth client (requires admin)."""
@@ -619,6 +621,41 @@ class TestOAuthErrorHandling:
         assert response.status_code == 422  # FastAPI validation error for missing required field
         data = response.json()
         assert "detail" in data
+
+    def test_unauthorized_grant_type(self, integration_client: TestClient, db_session: Session):
+        """Test that client cannot use grant types it doesn't have permission for."""
+        from app.models.oauth2_client import OAuth2Client
+
+        # Create a client with only authorization_code grant type
+        restricted_client = OAuth2Client(
+            client_id="restricted_client",
+            client_secret="restricted_secret",
+            name="Restricted Client",
+            redirect_uris='["http://localhost:3000/callback"]',
+            scopes='["openid", "profile"]',
+            grant_types='["authorization_code"]',  # Only authorization_code allowed
+            is_active=True
+        )
+        db_session.add(restricted_client)
+        db_session.commit()
+
+        token_data = {
+            "grant_type": "client_credentials",  # Not allowed for this client
+            "scope": "read write",
+            "client_id": restricted_client.client_id,
+            "client_secret": "restricted_secret"
+        }
+
+        response = integration_client.post(
+            "/oauth/token",
+            data=token_data
+        )
+
+        assert response.status_code == 403
+        data = response.json()
+        assert "error" in data
+        assert data["error"] == "unauthorized_client"
+        assert "not authorized to use client_credentials grant" in data["error_description"]
 
     def test_malformed_authorization_header(self, integration_client: TestClient):
         """Test malformed authorization header."""

@@ -611,6 +611,10 @@ async def _handle_authorization_code_grant(
     if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
+    # Validate grant type is allowed for this client
+    if not client.is_grant_type_allowed("authorization_code"):
+        raise OAuth2Error("unauthorized_client", "Client is not authorized to use authorization_code grant", status_code=403)
+
     # Validate authorization code
     auth_code = server.validator.get_authorization_code(client_id, code)
     if not auth_code:
@@ -661,6 +665,10 @@ async def _handle_refresh_token_grant(
     if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
+    # Validate grant type is allowed for this client
+    if not client.is_grant_type_allowed("refresh_token"):
+        raise OAuth2Error("unauthorized_client", "Client is not authorized to use refresh_token grant", status_code=403)
+
     # Validate refresh token
     token_info = server.validator.authenticate_refresh_token(refresh_token)
     if not token_info:
@@ -710,6 +718,10 @@ async def _handle_client_credentials_grant(
     if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
 
+    # Validate grant type is allowed for this client
+    if not client.is_grant_type_allowed("client_credentials"):
+        raise OAuth2Error("unauthorized_client", "Client is not authorized to use client_credentials grant", status_code=403)
+
     # Validate and normalize scopes
     validated_scope = validate_oauth2_scopes(scope, client.get_scopes())
 
@@ -738,6 +750,10 @@ async def _handle_password_grant(
 
     if not client or not client.verify_client_secret(client_secret):
         raise OAuth2Error("invalid_client", "Client authentication failed", status_code=401)
+
+    # Validate grant type is allowed for this client
+    if not client.is_grant_type_allowed("password"):
+        raise OAuth2Error("unauthorized_client", "Client is not authorized to use password grant", status_code=403)
 
     # Authenticate user
     user = server.validator.authenticate_user(username, password, client, None)
@@ -1099,7 +1115,8 @@ async def register_client(
         client_secret=client_secret,
         name=client_data.client_name,
         redirect_uris=[],
-        scopes=[]
+        scopes=[],
+        grant_types=[]
     )
     # Validate redirect URIs for security
     for uri in client_data.redirect_uris:
@@ -1107,6 +1124,7 @@ async def register_client(
 
     new_client.set_redirect_uris(client_data.redirect_uris)
     new_client.set_scopes(client_data.scopes or settings.oauth2_default_scopes)
+    new_client.set_grant_types(client_data.grant_types or ["authorization_code", "refresh_token"])
 
     # Add client to database first to get the ID
     db.add(new_client)
@@ -1126,6 +1144,7 @@ async def register_client(
         client_name=new_client.name,
         redirect_uris=new_client.get_redirect_uris(),
         scopes=new_client.get_scopes(),
+        grant_types=new_client.get_grant_types(),
         registration_access_token=token_record.plain_token,  # Return the plain token
         registration_client_uri=f"/oauth/clients/{new_client.client_id}"
     )
@@ -1218,6 +1237,7 @@ async def get_client(
         client_name=client.name,
         redirect_uris=client.get_redirect_uris(),
         scopes=client.get_scopes(),
+        grant_types=client.get_grant_types(),
         registration_client_uri=f"/oauth/clients/{client.client_id}",
         client_id_issued_at=int(client.created_at.timestamp()) if client.created_at else None,
         secret_last_rotated=client.secret_last_rotated,
@@ -1270,6 +1290,17 @@ async def update_client(
                 detail=str(e)
             )
 
+    if client_data.grant_types is not None:
+        # Validate grant types
+        valid_grant_types = {"authorization_code", "refresh_token", "client_credentials", "password"}
+        invalid_grant_types = set(client_data.grant_types) - valid_grant_types
+        if invalid_grant_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid grant types: {', '.join(invalid_grant_types)}"
+            )
+        client.set_grant_types(client_data.grant_types)
+
     client.updated_at = datetime.now(timezone.utc)
     db.commit()
 
@@ -1280,6 +1311,7 @@ async def update_client(
         client_name=client.name,
         redirect_uris=client.get_redirect_uris(),
         scopes=client.get_scopes(),
+        grant_types=client.get_grant_types(),
         registration_client_uri=f"/oauth/clients/{client.client_id}",
         client_id_issued_at=int(client.created_at.timestamp()) if client.created_at else None,
         secret_last_rotated=client.secret_last_rotated,

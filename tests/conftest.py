@@ -538,6 +538,7 @@ def test_oauth_client(db_session):
         name="Test OAuth Client",
         redirect_uris='["http://localhost:3000/callback"]',
         scopes='["openid", "profile", "email", "read", "write"]',
+        grant_types='["authorization_code", "refresh_token", "client_credentials", "password"]',
         is_active=True
     )
 
