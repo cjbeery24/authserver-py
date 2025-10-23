@@ -364,7 +364,8 @@ async def authorize(
     # For now, we'll embed the information in the CSRF token itself (JWT)
 
     # Redirect to login page with authorization request details and CSRF token
-    login_url = f"{settings.frontend_url}/login"
+    # Use integrated frontend if available, otherwise use external frontend URL
+    login_url = f"/oauth-demo/login" if settings.debug else f"{settings.frontend_url}/login"
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,

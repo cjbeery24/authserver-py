@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+docs/
+pm/
+tasks/
+
+# CI/CD
+.github/
+
+# Local development
+.env.local
+.env.*.local
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite3
+
+# Frontend (will be mounted as volume)
+frontend/oauth_credentials.txt
+
+# Other
+bandit-report.json

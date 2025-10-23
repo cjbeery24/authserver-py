@@ -1,145 +1,109 @@
-# Authentication Server - Development Makefile
+# Authentication Server - Docker-First Development Makefile
 
-.PHONY: help install dev test test-unit test-integration test-docker clean lint format security-check docker-build docker-up docker-down migrate migrate-fresh migrate-test seed setup-db
+.PHONY: help clean docker-build docker-up docker-down docker-ps docker-logs docker-restart docker-setup-db docker-migrate docker-migrate-fresh docker-seed test-docker test-docker-unit test-docker-int test-docker-file test-docker-rebuild docker-lint docker-format docker-security-check docker-shell ci
 
 # Default target
 help:
 	@echo "🔐 Authentication Server - Available Commands"
 	@echo ""
-	@echo "📦 Setup & Installation:"
-	@echo "  make install          Install dependencies with Poetry"
-	@echo "  make dev              Set up development environment"
+	@echo "🚀 Quick Start:"
+	@echo "  make docker-up         Start all services (API + DB + Redis + Frontend)"
+	@echo "  make docker-setup-db   Initialize database (migrations + seed data)"
+	@echo ""
+	@echo "🐳 Docker Services:"
+	@echo "  make docker-build      Build Docker images"
+	@echo "  make docker-up         Start development services"
+	@echo "  make docker-down       Stop all services and remove volumes"
+	@echo "  make docker-restart    Restart all services"
+	@echo "  make docker-ps         Show running containers"
+	@echo "  make docker-logs       View logs from all services"
+	@echo "  make docker-shell      Open shell in web container"
+	@echo ""
+	@echo "🗄️  Database:"
+	@echo "  make docker-setup-db          Complete database setup (fresh migrations + seed)"
+	@echo "  make docker-migrate           Run database migrations"
+	@echo "  make docker-migrate-fresh     Run fresh migrations (drops all tables first)"
+	@echo "  make docker-seed              Run database seeder"
 	@echo ""
 	@echo "🧪 Testing:"
-	@echo "  make test                      Run all tests (local SQLite)"
-	@echo "  make test-unit                 Run unit tests only"
-	@echo "  make test-integration          Run integration tests only"
-	@echo "  make test-unit-file            Run specific unit test file"
-	@echo "  make test-integration-file     Run specific integration test file"
-	@echo "  make test-docker               Run all tests in Docker (PostgreSQL)"
-	@echo "  make test-docker-unit          Run unit tests in Docker"
-	@echo "  make test-docker-int           Run integration tests in Docker"
-	@echo "  make test-docker-file          Run specific test file in Docker"
+	@echo "  make test-docker              Run all tests in Docker"
+	@echo "  make test-docker-unit         Run unit tests only"
+	@echo "  make test-docker-int          Run integration tests only"
+	@echo "  make test-docker-file         Run specific test file"
+	@echo "  make test-docker-rebuild      Run tests with image rebuild"
 	@echo ""
 	@echo "📝 Test File Examples:"
 	@echo "  make test-docker-file FILE=test_mfa_flows.py TYPE=int"
 	@echo "  make test-docker-file FILE=test_mfa_flows.py TYPE=int NAME=TestMFAStatus::test_get_mfa_status_disabled"
 	@echo ""
-	@echo "🐳 Docker:"
-	@echo "  make docker-build     Build Docker images"
-	@echo "  make docker-up        Start development services"
-	@echo "  make docker-down      Stop all services"
-	@echo "  make docker-test-up   Start test services"
-	@echo "  make docker-test-down Stop test services"
-	@echo ""
-	@echo "🗄️  Database:"
-	@echo "  make migrate          Run database migrations"
-	@echo "  make migrate-fresh    Run fresh database migrations (drops all tables first)"
-	@echo "  make migrate-test     Run migrations on test database"
-	@echo "  make seed             Run database seeder to create initial data"
-	@echo "  make setup-db         Run fresh migrations and seed data (complete setup)"
-	@echo ""
 	@echo "🔍 Code Quality:"
-	@echo "  make lint             Run linting checks"
-	@echo "  make format           Format code with black and isort"
-	@echo "  make security-check   Run security vulnerability checks"
+	@echo "  make docker-lint              Run linting checks"
+	@echo "  make docker-format            Format code with black and isort"
+	@echo "  make docker-security-check    Run security vulnerability checks"
 	@echo ""
 	@echo "🧹 Cleanup:"
-	@echo "  make clean            Clean up temporary files and caches"
+	@echo "  make clean                    Clean up temporary files and caches"
+	@echo ""
+	@echo "🔧 CI/CD:"
+	@echo "  make ci                       Run full CI pipeline (lint + security + tests)"
+	@echo ""
+	@echo "💡 Useful URLs:"
+	@echo "  API: http://localhost:8000"
+	@echo "  OAuth Demo: http://localhost:8000/oauth-demo"
+	@echo "  API Docs: http://localhost:8000/docs"
 
-# Installation and setup
-install:
-	@echo "📦 Installing dependencies..."
-	poetry install --with dev
+# Docker services
+docker-build:
+	@echo "🐳 Building Docker images..."
+	docker compose build
 
-dev: install
-	@echo "🛠️  Setting up development environment..."
-	@echo "Creating .env file if it doesn't exist..."
-	@if [ ! -f .env ]; then \
-		cp .env.example .env; \
-		echo "✅ Created .env file from .env.example"; \
-		echo "⚠️  Please update .env with your configuration"; \
-	else \
-		echo "✅ .env file already exists"; \
-	fi
-	@echo "🔑 Generating RSA keys..."
-	poetry run python scripts/generate_rsa_keys.py
-	@echo "✅ Development environment ready!"
+docker-up:
+	@echo "🐳 Starting development services..."
+	docker compose up -d
+	@echo "✅ Services started. Check with: docker compose ps"
+	@echo ""
+	@echo "💡 Useful URLs:"
+	@echo "  📱 OAuth Demo UI: http://localhost:8000/oauth-demo"
+	@echo "  📚 API Documentation: http://localhost:8000/docs"
+	@echo "  🏥 Health Check: http://localhost:8000/health"
 
-# Local testing (SQLite)
-test:
-	@echo "🧪 Running all tests (local SQLite)..."
-	poetry run pytest tests/ -v --tb=short --cov=app --cov-report=term-missing
+docker-down:
+	@echo "🐳 Stopping all services..."
+	docker compose down --volumes
 
-test-unit:
-	@echo "🧪 Running unit tests..."
-	poetry run pytest tests/unit/ -v --tb=short --cov=app --cov-report=term-missing
+docker-restart:
+	@echo "🔄 Restarting services..."
+	docker compose restart
 
-test-integration:
-	@echo "🧪 Running integration tests..."
-	poetry run pytest tests/integration/ -v --tb=short --cov=app --cov-report=term-missing
+docker-ps:
+	@echo "📊 Running containers:"
+	@docker compose ps
 
-test-integration-file:
-	@echo "🧪 Running specific integration test file..."
-	@if [ -z "$(FILE)" ] || [ -z "$(TYPE)" ]; then \
-		echo "❌ ERROR: Please specify FILE and TYPE variables"; \
-		echo "Usage: make test-integration-file FILE=test_mfa_flows.py TYPE=int [NAME=TestMFAStatus::test_get_mfa_status_disabled]"; \
-		exit 1; \
-	fi; \
-	if [ "$(TYPE)" != "int" ] && [ "$(TYPE)" != "unit" ]; then \
-		echo "❌ ERROR: TYPE must be 'int' or 'unit'"; \
-		exit 1; \
-	fi; \
-	if [[ "$(FILE)" == tests/* ]]; then \
-		FULL_PATH="$(FILE)"; \
-	else \
-		if [ "$(TYPE)" = "int" ]; then \
-			FULL_PATH="tests/integration/$(FILE)"; \
-		else \
-			FULL_PATH="tests/unit/$(FILE)"; \
-		fi; \
-	fi; \
-	if [ ! -f "$$FULL_PATH" ]; then \
-		echo "❌ ERROR: Test file $$FULL_PATH does not exist"; \
-		exit 1; \
-	fi; \
-	if [ -n "$(NAME)" ]; then \
-		poetry run pytest $$FULL_PATH::$(NAME) -v --tb=short --cov=app --cov-report=term-missing; \
-	else \
-		poetry run pytest $$FULL_PATH -v --tb=short --cov=app --cov-report=term-missing; \
-	fi
+docker-logs:
+	@echo "📋 Showing logs (Ctrl+C to exit)..."
+	docker compose logs -f
 
-test-unit-file:
-	@echo "🧪 Running specific unit test file..."
-	@if [ -z "$(FILE)" ] || [ -z "$(TYPE)" ]; then \
-		echo "❌ ERROR: Please specify FILE and TYPE variables"; \
-		echo "Usage: make test-unit-file FILE=test_authentication.py TYPE=unit [NAME=TestAuthentication::test_verify_password]"; \
-		exit 1; \
-	fi; \
-	if [ "$(TYPE)" != "int" ] && [ "$(TYPE)" != "unit" ]; then \
-		echo "❌ ERROR: TYPE must be 'int' or 'unit'"; \
-		exit 1; \
-	fi; \
-	if [[ "$(FILE)" == tests/* ]]; then \
-		FULL_PATH="$(FILE)"; \
-	else \
-		if [ "$(TYPE)" = "int" ]; then \
-			FULL_PATH="tests/integration/$(FILE)"; \
-		else \
-			FULL_PATH="tests/unit/$(FILE)"; \
-		fi; \
-	fi; \
-	if [ ! -f "$$FULL_PATH" ]; then \
-		echo "❌ ERROR: Test file $$FULL_PATH does not exist"; \
-		exit 1; \
-	fi; \
-	if [ -n "$(NAME)" ]; then \
-		poetry run pytest $$FULL_PATH::$(NAME) -v --tb=short --cov=app --cov-report=term-missing; \
-	else \
-		poetry run pytest $$FULL_PATH -v --tb=short --cov=app --cov-report=term-missing; \
-	fi
+docker-shell:
+	@echo "🐚 Opening shell in web container..."
+	docker compose exec authserver-web /bin/bash
 
-# Docker-based testing (PostgreSQL)
+# Database operations (Docker)
+docker-migrate:
+	@echo "🗄️  Running database migrations in Docker..."
+	docker compose exec authserver-web alembic upgrade head
+
+docker-migrate-fresh:
+	@echo "🗄️  Running fresh database migrations in Docker (drops all tables first)..."
+	docker compose exec authserver-web python scripts/migrate_fresh.py
+
+docker-seed:
+	@echo "🌱 Running database seeder in Docker..."
+	docker compose exec authserver-web python scripts/seed_db.py
+
+docker-setup-db: docker-migrate-fresh docker-seed
+	@echo "✅ Database setup complete with fresh migrations and seed data"
+
+# Testing (Docker)
 test-docker:
 	@echo "🐳 Running all tests in Docker..."
 	./scripts/test.sh
@@ -186,65 +150,22 @@ test-docker-rebuild:
 	@echo "🐳 Running tests in Docker (rebuilding images)..."
 	./scripts/test.sh --rebuild
 
-# Docker services
-docker-build:
-	@echo "🐳 Building Docker images..."
-	docker compose build
+# Code quality (Docker)
+docker-lint:
+	@echo "🔍 Running linting checks in Docker..."
+	docker compose exec authserver-web flake8 app tests
+	docker compose exec authserver-web mypy app
+	docker compose exec authserver-web bandit -r app -f json -o bandit-report.json || true
 
-docker-up:
-	@echo "🐳 Starting development services..."
-	docker compose up -d
-	@echo "✅ Services started. Check with: docker compose ps"
+docker-format:
+	@echo "🎨 Formatting code in Docker..."
+	docker compose exec authserver-web black app tests
+	docker compose exec authserver-web isort app tests
 
-docker-down:
-	@echo "🐳 Stopping all services..."
-	docker compose down --volumes
-
-docker-test-up:
-	@echo "🐳 Starting test services..."
-	docker compose -f docker-compose.test.yml up -d postgres-test redis-test
-	@echo "✅ Test services started"
-
-docker-test-down:
-	@echo "🐳 Stopping test services..."
-	docker compose -f docker-compose.test.yml down --volumes
-
-# Database migrations
-migrate:
-	@echo "🗄️  Running database migrations..."
-	poetry run alembic upgrade head
-
-migrate-fresh:
-	@echo "🗄️  Running fresh database migrations (drops all tables first)..."
-	poetry run python scripts/migrate_fresh.py
-
-migrate-test:
-	@echo "🗄️  Running migrations on test database..."
-	DATABASE_URL="postgresql://testuser:testpass@localhost:5433/authserver_test" poetry run alembic upgrade head
-
-seed:
-	@echo "🌱 Running database seeder..."
-	poetry run python scripts/seed_db.py
-
-setup-db: migrate-fresh seed
-	@echo "✅ Database setup complete with fresh migrations and seed data"
-
-# Code quality
-lint:
-	@echo "🔍 Running linting checks..."
-	poetry run flake8 app tests
-	poetry run mypy app
-	poetry run bandit -r app -f json -o bandit-report.json || true
-
-format:
-	@echo "🎨 Formatting code..."
-	poetry run black app tests
-	poetry run isort app tests
-
-security-check:
-	@echo "🔒 Running security checks..."
-	poetry run safety check
-	poetry run bandit -r app
+docker-security-check:
+	@echo "🔒 Running security checks in Docker..."
+	docker compose exec authserver-web safety check
+	docker compose exec authserver-web bandit -r app
 
 # Cleanup
 clean:
@@ -259,19 +180,6 @@ clean:
 	rm -rf build
 	@echo "✅ Cleanup complete"
 
-# Development server
-run:
-	@echo "🚀 Starting development server..."
-	poetry run python run.py
-
-run-prod:
-	@echo "🚀 Starting production server..."
-	poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# Quick development workflow
-dev-test: format lint test
-	@echo "✅ Development workflow complete!"
-
 # CI/CD workflow
-ci: install lint security-check test-docker
+ci: docker-lint docker-security-check test-docker
 	@echo "✅ CI workflow complete!"

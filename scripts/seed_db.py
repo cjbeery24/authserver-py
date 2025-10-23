@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Database seeder script to create initial roles and users.
+Database seeder script to create initial roles, users, and OAuth clients.
 
 This script creates:
 - Two roles: 'user' and 'admin'
 - A regular user with the 'user' role
 - An admin user with the 'admin' role
+- An OAuth client for frontend demo
 
 Usage:
     python scripts/seed_db.py
@@ -24,9 +25,11 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.database import SessionLocal
 from app.core.crypto import PasswordHasher
+from app.core.oauth import generate_client_credentials
 from app.models.role import Role
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.models.oauth2_client import OAuth2Client
 
 
 def create_roles(db: Session):
@@ -113,6 +116,64 @@ def create_users(db: Session):
     return created_users
 
 
+def create_oauth_clients(db: Session):
+    """Create OAuth clients for development/demo purposes."""
+    oauth_clients_data = [
+        {
+            "name": "OAuth Frontend Demo",
+            "redirect_uris": [
+                "http://localhost:8000/oauth-demo/callback",  # Integrated frontend (Docker/local)
+                "http://localhost:3000/callback.html",        # Standalone frontend
+                "http://localhost:8080/callback.html",
+                "http://127.0.0.1:3000/callback.html",
+                "http://127.0.0.1:8000/oauth-demo/callback"
+            ],
+            "scopes": ["openid", "profile", "email", "offline_access"]
+        }
+    ]
+
+    created_clients = []
+    for client_data in oauth_clients_data:
+        # Check if a client with this name already exists
+        existing_client = db.query(OAuth2Client).filter(
+            OAuth2Client.name == client_data["name"]
+        ).first()
+
+        if existing_client:
+            print(f"⚠️  OAuth client '{client_data['name']}' already exists, skipping")
+            created_clients.append(existing_client)
+            continue
+
+        # Generate client credentials
+        client_id, client_secret = generate_client_credentials()
+
+        # Create OAuth client
+        client = OAuth2Client(
+            client_id=client_id,
+            client_secret=client_secret,
+            name=client_data["name"],
+            redirect_uris=[],
+            scopes=[]
+        )
+
+        # Set redirect URIs and scopes
+        client.set_redirect_uris(client_data["redirect_uris"])
+        client.set_scopes(client_data["scopes"])
+
+        db.add(client)
+        db.flush()  # Flush to get the client ID
+
+        created_clients.append(client)
+        print(f"✅ Created OAuth client '{client.name}'")
+
+        # Store credentials for display later
+        client._plain_client_id = client_id
+        client._plain_client_secret = client_secret
+
+    db.commit()
+    return created_clients
+
+
 def main():
     """Main function to run the database seeding."""
     print("🌱 Starting database seeding...")
@@ -127,6 +188,10 @@ def main():
         # Create users
         print("\n👤 Creating users...")
         users = create_users(db)
+
+        # Create OAuth clients
+        print("\n🔑 Creating OAuth clients...")
+        oauth_clients = create_oauth_clients(db)
 
         print("\n🎉 Database seeding completed successfully!")
         print("\nCreated roles:")
@@ -143,6 +208,30 @@ def main():
         print("\n🔐 User credentials:")
         print("  Regular user: user@example.com / Str0ngP@ssw0rd!")
         print("  Admin user: admin@example.com / Str0ngP@ssw0rd!")
+
+        # Display OAuth client credentials
+        print("\n🔑 OAuth Clients:")
+        for client in oauth_clients:
+            print(f"  - {client.name}")
+            if hasattr(client, '_plain_client_id'):
+                print(f"    Client ID: {client._plain_client_id}")
+                print(f"    Client Secret: {client._plain_client_secret}")
+                print(f"    Redirect URIs: {', '.join(client.get_redirect_uris())}")
+                print(f"    Scopes: {', '.join(client.get_scopes())}")
+
+        # Write OAuth credentials to file for easy reference
+        if oauth_clients and hasattr(oauth_clients[0], '_plain_client_id'):
+            credentials_file = project_root / "frontend" / "oauth_credentials.txt"
+            with open(credentials_file, "w") as f:
+                for client in oauth_clients:
+                    if hasattr(client, '_plain_client_id'):
+                        f.write(f"# {client.name}\n")
+                        f.write(f"CLIENT_ID={client._plain_client_id}\n")
+                        f.write(f"CLIENT_SECRET={client._plain_client_secret}\n")
+                        f.write(f"\n# Update these values in:\n")
+                        f.write(f"# - frontend/index.html (CLIENT_ID)\n")
+                        f.write(f"# - frontend/callback.html (CLIENT_ID and CLIENT_SECRET)\n\n")
+            print(f"\n💾 OAuth credentials saved to: {credentials_file}")
 
     except IntegrityError as e:
         print(f"❌ Database integrity error: {e}")

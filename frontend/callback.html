@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OAuth Callback</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <div class="loading-spinner">
+          <div class="spinner"></div>
+          <p>Processing OAuth callback...</p>
+        </div>
+        <div id="error-section" style="display: none">
+          <h2>Authentication Error</h2>
+          <p id="error-message" class="error-message"></p>
+          <button
+            onclick="window.location.href=window.location.origin.includes('localhost:8000') ? '/oauth-demo' : 'index.html'"
+            class="btn btn-secondary"
+          >
+            Return to Home
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/oauth.js"></script>
+    <script>
+      // Use relative URLs when served from the same origin
+      const API_URL = window.location.origin.includes("localhost:8000")
+        ? window.location.origin
+        : "http://localhost:8000";
+      const CLIENT_ID = "your-client-id"; // Replace with your actual client ID
+      const CLIENT_SECRET = "your-client-secret"; // Replace with your actual client secret
+      const REDIRECT_URI = window.location.origin.includes("localhost:8000")
+        ? `${window.location.origin}/oauth-demo/callback`
+        : "http://localhost:3000/callback.html";
+
+      async function handleCallback() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get("code");
+        const state = urlParams.get("state");
+        const error = urlParams.get("error");
+        const errorDescription = urlParams.get("error_description");
+
+        // Check for errors
+        if (error) {
+          showError(
+            `OAuth Error: ${error}${
+              errorDescription ? " - " + errorDescription : ""
+            }`
+          );
+          return;
+        }
+
+        // Validate state
+        const savedState = sessionStorage.getItem("oauth_state");
+        if (state !== savedState) {
+          showError("State mismatch. Possible CSRF attack.");
+          return;
+        }
+
+        // Get code verifier
+        const codeVerifier = sessionStorage.getItem("pkce_verifier");
+        if (!codeVerifier) {
+          showError("Missing PKCE code verifier.");
+          return;
+        }
+
+        try {
+          // Exchange authorization code for tokens
+          const tokenData = new FormData();
+          tokenData.append("grant_type", "authorization_code");
+          tokenData.append("code", code);
+          tokenData.append("redirect_uri", REDIRECT_URI);
+          tokenData.append("client_id", CLIENT_ID);
+          tokenData.append("client_secret", CLIENT_SECRET);
+          tokenData.append("code_verifier", codeVerifier);
+
+          const response = await fetch(`${API_URL}/oauth/token`, {
+            method: "POST",
+            body: tokenData,
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(
+              errorData.error_description ||
+                errorData.error ||
+                "Token exchange failed"
+            );
+          }
+
+          const tokens = await response.json();
+
+          // Store tokens
+          sessionStorage.setItem("oauth_tokens", JSON.stringify(tokens));
+
+          // Clean up temporary storage
+          sessionStorage.removeItem("oauth_state");
+          sessionStorage.removeItem("pkce_verifier");
+
+          // Redirect back to main page
+          window.location.href = window.location.origin.includes(
+            "localhost:8000"
+          )
+            ? "/oauth-demo"
+            : "index.html";
+        } catch (error) {
+          console.error("Token exchange error:", error);
+          showError(
+            error.message || "Failed to exchange authorization code for tokens"
+          );
+        }
+      }
+
+      function showError(message) {
+        document.querySelector(".loading-spinner").style.display = "none";
+        document.getElementById("error-section").style.display = "block";
+        document.getElementById("error-message").textContent = message;
+      }
+
+      // Run callback handler on page load
+      handleCallback();
+    </script>
+  </body>
+</html>

@@ -2,6 +2,22 @@
 
 A robust, production-ready authentication and authorization server built with FastAPI, SQLAlchemy, and PostgreSQL. This server provides comprehensive OAuth 2.0, OpenID Connect, and multi-factor authentication capabilities.
 
+## 🎉 OAuth Demo UI
+
+The project includes an **integrated OAuth demo frontend** served directly from the FastAPI application!
+
+**Quick Access**:
+
+- 🔗 Local/Docker: `http://localhost:8000/oauth-demo`
+- 📖 Standalone Mode: [frontend/README.md](frontend/README.md)
+
+**Features**:
+
+- ✅ OAuth 2.0 Authorization Code Flow with PKCE
+- ✅ Integrated into Docker container (no separate frontend server needed)
+- ✅ Auto-configuration based on deployment environment
+- ✅ Modern, responsive UI with real-time token display
+
 ## 🚀 Features
 
 - **OAuth 2.0 & OpenID Connect** - Full implementation with PKCE support
@@ -27,9 +43,9 @@ A robust, production-ready authentication and authorization server built with Fa
 
 ## 📋 Prerequisites
 
-- Python 3.13 or higher
-- Docker and Docker Compose
-- Poetry (for dependency management)
+- **Docker Desktop** (includes Docker and Docker Compose)
+- **Git**
+- That's it! Everything else runs in Docker containers
 
 ## 🚀 Quick Start
 
@@ -40,50 +56,49 @@ git clone <repository-url>
 cd authserver-py
 ```
 
-### 2. Install Dependencies
-
-```bash
-# Install Poetry if you haven't already
-curl -sSL https://install.python-poetry.org | python3 -
-
-# Install project dependencies
-poetry install
-```
-
-### 3. Environment Configuration
+### 2. Environment Configuration
 
 ```bash
 # Copy the example environment file
 cp .env.example .env
 
-# Edit .env with your configuration
-# Required variables:
-# - DATABASE_URL
-# - JWT_SECRET_KEY
-# - Other database and security settings
+# Edit .env with your configuration (use the defaults for quick start)
+# Most important: Set JWT_SECRET_KEY, JWT_PRIVATE_KEY, JWT_PUBLIC_KEY
 ```
 
-### 4. Start Development Environment
+### 3. Start Everything with Docker
 
 ```bash
-# Start PostgreSQL and Redis containers
+# Start all services (API, PostgreSQL, Redis, Frontend)
 make docker-up
 
-# Wait for services to be ready, then run migrations
-poetry run alembic upgrade head
+# Initialize the database (run migrations + seed data)
+make docker-setup-db
 ```
 
-### 5. Run the Application
+That's it! 🎉 Everything is now running:
+
+- 🌐 **API Server**: http://localhost:8000
+- 📱 **OAuth Demo UI**: http://localhost:8000/oauth-demo
+- 📚 **API Documentation**: http://localhost:8000/docs
+- 🏥 **Health Check**: http://localhost:8000/health
+
+### Daily Development
 
 ```bash
-# Development mode with auto-reload
-make run
+# Check container status
+make docker-ps
 
-# Or manually
-poetry run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# View logs
+make docker-logs
+
+# Restart services (after code changes)
+# Note: Most Python changes auto-reload!
+make docker-restart
+
+# Stop everything
+make docker-down
 ```
-
-The server will be available at `http://localhost:8000`
 
 ## 📚 API Documentation
 
@@ -95,27 +110,40 @@ Once the server is running, you can access:
 
 ## 🗄️ Database Management
 
-### Running Migrations
+### Common Database Operations
 
 ```bash
-# Create a new migration
-poetry run alembic revision --autogenerate -m "Description of changes"
+# Complete database setup (fresh migrations + seed data)
+make docker-setup-db
 
-# Apply migrations
-poetry run alembic upgrade head
+# Run migrations only
+make docker-migrate
 
-# Rollback migrations
-poetry run alembic downgrade -1
+# Reset database (drops all tables + runs migrations)
+make docker-migrate-fresh
 
-# Check current migration status
-poetry run alembic current
+# Seed database with test data
+make docker-seed
+```
+
+### Advanced Database Operations
+
+```bash
+# Open a shell in the container to run custom commands
+make docker-shell
+
+# Then inside the container:
+alembic revision --autogenerate -m "Description of changes"
+alembic upgrade head
+alembic downgrade -1
+alembic current
 ```
 
 ### Database Connection
 
-The application automatically connects to the database using the configuration in your `.env` file. The default development setup uses:
+The application connects to PostgreSQL running in Docker:
 
-- **Host**: localhost
+- **Host**: postgres (container name) / localhost (from host)
 - **Port**: 5432
 - **Database**: authserver
 - **User**: authuser
@@ -125,79 +153,71 @@ The application automatically connects to the database using the configuration i
 ### Run All Tests
 
 ```bash
-make test
-# or
-poetry run pytest
+# Run all tests in Docker (recommended)
+make test-docker
+
+# Run unit tests only
+make test-docker-unit
+
+# Run integration tests only
+make test-docker-int
+
+# Run specific test file
+make test-docker-file FILE=test_mfa_flows.py TYPE=int
+
+# Run specific test class/method
+make test-docker-file FILE=test_mfa_flows.py TYPE=int NAME=TestMFAStatus::test_get_mfa_status_disabled
 ```
 
-### Run Specific Test Categories
+## 🔍 Code Quality
+
+### Linting and Formatting
 
 ```bash
-# Unit tests only
-poetry run pytest tests/unit/
+# Run linting checks
+make docker-lint
 
-# Integration tests
-poetry run pytest tests/integration/
+# Format code (black + isort)
+make docker-format
 
-# With coverage
-poetry run pytest --cov=app
+# Security checks
+make docker-security-check
 ```
 
-### Test Database
-
-Tests use a separate test database. Ensure your `.env` file includes:
+### CI/CD Pipeline
 
 ```bash
-TESTING=true
-TEST_DATABASE_URL=postgresql://authuser:authpass@localhost:5432/authserver_test
+# Run full CI pipeline (lint + security + tests)
+make ci
 ```
 
-## 🐳 Docker Commands
+## 🛠️ Available Make Commands
+
+For a complete list of available commands:
+
+```bash
+make help
+```
+
+Common commands:
 
 ```bash
 # Start services
 make docker-up
 
-# Stop services
-make docker-down
+# Initialize database
+make docker-setup-db
 
-# Restart services
-make docker-restart
+# Run tests
+make test-docker
 
 # View logs
 make docker-logs
 
-# Check status
-make docker-status
+# Stop services
+make docker-down
 
-# Clean up (removes volumes)
-make docker-clean
-```
-
-## 🔧 Development Commands
-
-```bash
-# Install dependencies
-make install-dev
-
-# Add new dependency
-make add package=package-name
-
-# Add development dependency
-make add-dev package=package-name
-
-# Update dependencies
-make update
-
-# Code formatting
-poetry run black app/ tests/
-poetry run isort app/ tests/
-
-# Linting
-poetry run flake8 app/ tests/
-poetry run mypy app/
-
-# Clean up cache files
+# Clean up temporary files
 make clean
 ```
 

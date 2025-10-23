@@ -40,6 +40,10 @@ EXCLUDED_AUTH_PATHS = [
     "/oauth/introspect",  # Token introspection
     "/oauth/revoke",  # Token revocation
     "/oauth/userinfo",  # OpenID Connect UserInfo endpoint
+    "/oauth-demo",  # OAuth demo frontend index
+    "/oauth-demo/login",  # OAuth demo login page
+    "/oauth-demo/callback",  # OAuth demo callback page
+    "/static",  # Static files for frontend
 ]
 
 
@@ -126,6 +130,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """Check if the path should skip authentication."""
         if path in self.exclude_paths or path == "/":
             return True
+        # Check for prefix matches (e.g., /static/*, /oauth-demo/*)
+        for excluded_path in self.exclude_paths:
+            if path.startswith(excluded_path + "/") or path.startswith(excluded_path + "?"):
+                return True
         return False
 
     async def _unauthorized_response(self, message: str = "Authentication required") -> JSONResponse:

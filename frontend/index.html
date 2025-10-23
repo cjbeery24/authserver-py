@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OAuth Demo - Home</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <h1>OAuth 2.0 Demo</h1>
+        <p class="subtitle">
+          Test your OAuth authorization code flow with PKCE
+        </p>
+
+        <div class="info-section">
+          <h2>What is this?</h2>
+          <p>
+            This demo application demonstrates the OAuth 2.0 Authorization Code
+            flow with PKCE (Proof Key for Code Exchange). Click the button below
+            to start the authentication process.
+          </p>
+        </div>
+
+        <button id="login-btn" class="btn btn-primary">
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 20 20"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M10 0C4.477 0 0 4.477 0 10s4.477 10 10 10 10-4.477 10-10S15.523 0 10 0zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"
+              fill="currentColor"
+            />
+          </svg>
+          Login with OAuth
+        </button>
+
+        <div class="token-display" id="token-display" style="display: none">
+          <h3>Authentication Successful!</h3>
+          <div class="token-section">
+            <h4>Access Token</h4>
+            <pre id="access-token"></pre>
+          </div>
+          <div class="token-section">
+            <h4>ID Token (Decoded)</h4>
+            <pre id="id-token"></pre>
+          </div>
+          <div class="token-section">
+            <h4>User Info</h4>
+            <pre id="user-info"></pre>
+          </div>
+          <button id="logout-btn" class="btn btn-secondary">Logout</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/oauth.js"></script>
+    <script>
+      // Use relative URLs when served from the same origin, otherwise use localhost
+      const API_URL = window.location.origin.includes("localhost:8000")
+        ? window.location.origin
+        : "http://localhost:8000";
+      const CLIENT_ID = "your-client-id"; // Replace with your actual client ID
+      const REDIRECT_URI = window.location.origin.includes("localhost:8000")
+        ? `${window.location.origin}/oauth-demo/callback`
+        : "http://localhost:3000/callback.html";
+
+      // Check if we have tokens in sessionStorage
+      window.addEventListener("DOMContentLoaded", () => {
+        const tokens = sessionStorage.getItem("oauth_tokens");
+        if (tokens) {
+          displayTokens(JSON.parse(tokens));
+        }
+      });
+
+      document.getElementById("login-btn").addEventListener("click", () => {
+        initiateOAuthFlow(API_URL, CLIENT_ID, REDIRECT_URI);
+      });
+
+      document.getElementById("logout-btn").addEventListener("click", () => {
+        sessionStorage.removeItem("oauth_tokens");
+        sessionStorage.removeItem("oauth_state");
+        sessionStorage.removeItem("pkce_verifier");
+        document.getElementById("token-display").style.display = "none";
+        document.getElementById("login-btn").style.display = "block";
+      });
+
+      function displayTokens(tokens) {
+        document.getElementById("login-btn").style.display = "none";
+        document.getElementById("token-display").style.display = "block";
+
+        // Display access token (truncated)
+        const accessToken = tokens.access_token;
+        document.getElementById("access-token").textContent =
+          accessToken.substring(0, 50) +
+          "..." +
+          accessToken.substring(accessToken.length - 20);
+
+        // Decode and display ID token if present
+        if (tokens.id_token) {
+          try {
+            const decodedIdToken = decodeJWT(tokens.id_token);
+            document.getElementById("id-token").textContent = JSON.stringify(
+              decodedIdToken,
+              null,
+              2
+            );
+          } catch (e) {
+            document.getElementById("id-token").textContent =
+              "Error decoding ID token";
+          }
+        }
+
+        // Fetch and display user info
+        fetchUserInfo(tokens.access_token);
+      }
+
+      async function fetchUserInfo(accessToken) {
+        try {
+          const response = await fetch(`${API_URL}/oauth/userinfo`, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+            },
+          });
+
+          if (response.ok) {
+            const userInfo = await response.json();
+            document.getElementById("user-info").textContent = JSON.stringify(
+              userInfo,
+              null,
+              2
+            );
+          } else {
+            document.getElementById(
+              "user-info"
+            ).textContent = `Error: ${response.status} ${response.statusText}`;
+          }
+        } catch (error) {
+          document.getElementById(
+            "user-info"
+          ).textContent = `Error fetching user info: ${error.message}`;
+        }
+      }
+
+      function decodeJWT(token) {
+        const parts = token.split(".");
+        if (parts.length !== 3) {
+          throw new Error("Invalid JWT");
+        }
+        const payload = parts[1];
+        const decoded = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+        return JSON.parse(decoded);
+      }
+    </script>
+  </body>
+</html>

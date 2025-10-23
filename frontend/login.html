@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - OAuth Demo</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="card login-card">
+        <div class="login-header">
+          <h1>Sign In</h1>
+          <p class="subtitle">Enter your credentials to continue</p>
+        </div>
+
+        <div
+          id="error-message"
+          class="error-message"
+          style="display: none"
+        ></div>
+
+        <form id="login-form">
+          <div class="form-group">
+            <label for="username">Username or Email</label>
+            <input
+              type="text"
+              id="username"
+              name="username"
+              required
+              autocomplete="username"
+              placeholder="Enter your username"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              placeholder="Enter your password"
+            />
+          </div>
+
+          <div class="consent-section">
+            <h3>Requested Permissions</h3>
+            <ul id="scopes-list" class="scopes-list">
+              <!-- Scopes will be populated by JavaScript -->
+            </ul>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="submit-btn">
+            Sign In & Authorize
+          </button>
+
+          <div class="form-footer">
+            <a href="#" class="link">Forgot password?</a>
+          </div>
+        </form>
+
+        <div class="oauth-info">
+          <h4>Authorizing Application</h4>
+          <p id="client-info">Loading...</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Use relative URLs when served from the same origin
+      const API_URL = window.location.origin.includes("localhost:8000")
+        ? window.location.origin
+        : "http://localhost:8000";
+
+      // Parse URL parameters
+      const urlParams = new URLSearchParams(window.location.search);
+      const clientId = urlParams.get("client_id");
+      const redirectUri = urlParams.get("redirect_uri");
+      const scope = urlParams.get("scope");
+      const state = urlParams.get("state");
+      const csrfToken = urlParams.get("csrf_token");
+      const codeChallenge = urlParams.get("code_challenge");
+      const codeChallengeMethod = urlParams.get("code_challenge_method");
+      const nonce = urlParams.get("nonce");
+
+      // Display client and scope information
+      document.getElementById("client-info").textContent = `Client ID: ${
+        clientId || "Unknown"
+      }`;
+
+      const scopesList = document.getElementById("scopes-list");
+      if (scope) {
+        const scopes = scope.split(" ");
+        const scopeDescriptions = {
+          openid: "Access your identity",
+          profile: "Access your profile information",
+          email: "Access your email address",
+          offline_access: "Access your data while you're offline",
+          read: "Read access to your data",
+          write: "Write access to your data",
+        };
+
+        scopes.forEach((s) => {
+          const li = document.createElement("li");
+          li.innerHTML = `<strong>${s}</strong>: ${
+            scopeDescriptions[s] || "Access to " + s
+          }`;
+          scopesList.appendChild(li);
+        });
+      }
+
+      // Handle form submission
+      document
+        .getElementById("login-form")
+        .addEventListener("submit", async (e) => {
+          e.preventDefault();
+
+          const username = document.getElementById("username").value;
+          const password = document.getElementById("password").value;
+          const submitBtn = document.getElementById("submit-btn");
+          const errorMessage = document.getElementById("error-message");
+
+          // Clear previous errors
+          errorMessage.style.display = "none";
+          submitBtn.disabled = true;
+          submitBtn.textContent = "Signing in...";
+
+          try {
+            // First, authenticate the user
+            const authResponse = await fetch(`${API_URL}/api/v1/auth/login`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ username, password }),
+            });
+
+            if (!authResponse.ok) {
+              const error = await authResponse.json();
+              throw new Error(error.detail || "Authentication failed");
+            }
+
+            const authData = await authResponse.json();
+            const userId = authData.user_id || authData.id;
+
+            if (!userId) {
+              throw new Error("User ID not found in authentication response");
+            }
+
+            // Complete the OAuth authorization
+            const formData = new FormData();
+            formData.append("csrf_token", csrfToken);
+            formData.append("user_id", userId);
+            formData.append("consent_given", "true");
+
+            const authzResponse = await fetch(
+              `${API_URL}/oauth/authorize/complete`,
+              {
+                method: "POST",
+                body: formData,
+              }
+            );
+
+            if (!authzResponse.ok) {
+              const error = await authzResponse.json();
+              throw new Error(
+                error.error_description ||
+                  error.detail ||
+                  "Authorization failed"
+              );
+            }
+
+            const authzData = await authzResponse.json();
+
+            // Redirect to the callback URL
+            window.location.href = authzData.redirect_uri;
+          } catch (error) {
+            console.error("Login error:", error);
+            errorMessage.textContent =
+              error.message || "An error occurred during login";
+            errorMessage.style.display = "block";
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Sign In & Authorize";
+          }
+        });
+
+      // Validate that we have required parameters
+      if (!csrfToken || !clientId) {
+        document.getElementById("error-message").textContent =
+          "Invalid authorization request. Missing required parameters.";
+        document.getElementById("error-message").style.display = "block";
+        document.getElementById("submit-btn").disabled = true;
+      }
+    </script>
+  </body>
+</html>

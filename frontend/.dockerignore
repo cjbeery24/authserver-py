@@ -1,0 +1,6 @@
+# Don't copy these to Docker
+oauth_credentials.txt
+node_modules/
+.DS_Store
+
+

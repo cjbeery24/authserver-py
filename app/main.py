@@ -2,11 +2,13 @@
 Main FastAPI application entry point.
 """
 
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.staticfiles import StaticFiles
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
 
@@ -259,6 +261,44 @@ async def root():
 from app.routers import include_routers
 
 include_routers(app)
+
+# Mount static files for frontend (OAuth demo UI)
+# Get the path to the frontend directory
+frontend_dir = Path(__file__).parent.parent / "frontend"
+
+# Only mount if frontend directory exists
+if frontend_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_dir), html=True), name="static")
+    logger.info(f"Static files mounted at /static from {frontend_dir}")
+    
+    # Serve index.html at /oauth-demo
+    @app.get("/oauth-demo")
+    async def oauth_demo_index():
+        """Serve the OAuth demo frontend."""
+        index_file = frontend_dir / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+        return {"error": "OAuth demo frontend not found"}
+    
+    # Serve login.html at /oauth-demo/login
+    @app.get("/oauth-demo/login")
+    async def oauth_demo_login():
+        """Serve the OAuth demo login page."""
+        login_file = frontend_dir / "login.html"
+        if login_file.exists():
+            return FileResponse(login_file)
+        return {"error": "OAuth demo login page not found"}
+    
+    # Serve callback.html at /oauth-demo/callback
+    @app.get("/oauth-demo/callback")
+    async def oauth_demo_callback():
+        """Serve the OAuth demo callback page."""
+        callback_file = frontend_dir / "callback.html"
+        if callback_file.exists():
+            return FileResponse(callback_file)
+        return {"error": "OAuth demo callback page not found"}
+else:
+    logger.warning(f"Frontend directory not found at {frontend_dir}, static files not mounted")
 
 if __name__ == "__main__":
     import uvicorn
