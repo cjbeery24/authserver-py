@@ -6,7 +6,10 @@ This script creates:
 - Two roles: 'user' and 'admin'
 - A regular user with the 'user' role
 - An admin user with the 'admin' role
-- An OAuth client for frontend demo
+- An OAuth client for frontend demo (with consistent client secret for development)
+
+Note: The OAuth client secret is consistent across runs for demo purposes.
+In production, client secrets should be randomly generated and stored securely.
 
 Usage:
     python scripts/seed_db.py
@@ -128,7 +131,8 @@ def create_oauth_clients(db: Session):
                 "http://127.0.0.1:3000/callback.html",
                 "http://127.0.0.1:8000/oauth-demo/callback"
             ],
-            "scopes": ["openid", "profile", "email", "offline_access"]
+            "scopes": ["openid", "profile", "email", "offline_access"],
+            "grant_types": ["authorization_code", "refresh_token", "password"]
         }
     ]
 
@@ -144,8 +148,10 @@ def create_oauth_clients(db: Session):
             created_clients.append(existing_client)
             continue
 
-        # Generate client credentials
-        client_id, client_secret = generate_client_credentials()
+        # Generate client credentials - use consistent secret for demo purposes
+        import secrets
+        client_id = secrets.token_urlsafe(32)  # Random client_id
+        client_secret = "demo_client_secret_1234567890123456789012345678901234567890"  # Consistent secret for demo
 
         # Create OAuth client
         client = OAuth2Client(
@@ -156,9 +162,10 @@ def create_oauth_clients(db: Session):
             scopes=[]
         )
 
-        # Set redirect URIs and scopes
+        # Set redirect URIs, scopes, and grant types
         client.set_redirect_uris(client_data["redirect_uris"])
         client.set_scopes(client_data["scopes"])
+        client.set_grant_types(client_data["grant_types"])
 
         db.add(client)
         db.flush()  # Flush to get the client ID
@@ -218,16 +225,21 @@ def main():
                 print(f"    Client Secret: {client._plain_client_secret}")
                 print(f"    Redirect URIs: {', '.join(client.get_redirect_uris())}")
                 print(f"    Scopes: {', '.join(client.get_scopes())}")
+                print(f"    Grant Types: {', '.join(client.get_grant_types())}")
 
         # Write OAuth credentials to file for easy reference
         if oauth_clients and hasattr(oauth_clients[0], '_plain_client_id'):
             credentials_file = project_root / "frontend" / "oauth_credentials.txt"
             with open(credentials_file, "w") as f:
+                f.write("# OAuth Client Credentials for Development\n")
+                f.write("# NOTE: Client secret is consistent across seed runs for demo purposes\n")
+                f.write("# In production, secrets should be randomly generated and stored securely\n\n")
                 for client in oauth_clients:
                     if hasattr(client, '_plain_client_id'):
                         f.write(f"# {client.name}\n")
                         f.write(f"CLIENT_ID={client._plain_client_id}\n")
                         f.write(f"CLIENT_SECRET={client._plain_client_secret}\n")
+                        f.write(f"GRANT_TYPES={','.join(client.get_grant_types())}\n")
                         f.write(f"\n# Update these values in:\n")
                         f.write(f"# - frontend/index.html (CLIENT_ID)\n")
                         f.write(f"# - frontend/callback.html (CLIENT_ID and CLIENT_SECRET)\n\n")
